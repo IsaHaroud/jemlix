@@ -1,0 +1,6 @@
+[Unit]
+Description=Create a consistent Jemlix SQLite backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/jemla/deploy/backup-db.sh

@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#14221c">
+<title>Jemlix — الإدارة</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="admin">
+<header class="admin-bar">
+  <a class="wordmark" href="/">Jemlix</a>
+  <span class="role">الإدارة</span>
+  <span class="grow"></span>
+  <span id="counts" class="muted"></span>
+  <a class="text-link" href="/">الكاطالوغ</a>
+  <button type="button" id="logout" class="text-btn">خروج</button>
+</header>
+<div class="admin-shell">
+  <aside class="queue-col">
+    <div class="filters">
+      <select id="supplier" aria-label="المورّد">
+        <option value="">اختار المورّد</option>
+      </select>
+      <select id="status" aria-label="الحالة">
+        <option value="new" selected>جديد</option>
+        <option value="done">منشور</option>
+        <option value="skipped">متخطى</option>
+        <option value="">الكل</option>
+      </select>
+      <select id="channel" aria-label="القناة">
+        <option value="">كل القنوات</option>
+      </select>
+      <input id="q" type="search" placeholder="بحث فالبوسطات" autocomplete="off">
+      <p id="queue-note" class="form-error" hidden></p>
+    </div>
+    <div id="queue"></div>
+    <button type="button" id="more" class="more" hidden>عرض المزيد</button>
+    <div class="queue-actions">
+      <span id="sel-count" class="grow">0 محدد</span>
+      <button type="button" id="clear" class="ghost">مسح</button>
+      <button type="button" id="skip" class="ghost">تخطي</button>
+      <button type="button" id="build" class="primary">كوّن منتج</button>
+    </div>
+  </aside>
+  <main class="admin-main">
+    <nav class="tabs" role="tablist" aria-label="أقسام الإدارة">
+      <button type="button" id="tab-posts" class="chip" role="tab" aria-selected="true">الطلبات</button>
+      <button type="button" id="tab-products" class="chip" role="tab" aria-selected="false">المنتجات المنشورة</button>
+      <button type="button" id="tab-subs" class="chip" role="tab" aria-selected="false">المرسلات <span id="subs-badge" class="badge-moq" hidden></span></button>
+      <button type="button" id="tab-supp" class="chip" role="tab" aria-selected="false">الموردون</button>
+    </nav>
+    <section id="view-products" hidden>
+      <h2>المنتجات المنشورة</h2>
+      <div class="panel">
+        <div class="brand-row">
+          <select id="pub-supplier" aria-label="مورّد المنتجات">
+            <option value="">كل المورّدين</option>
+          </select>
+          <input id="pub-q" type="search" placeholder="بحث فالمنتجات" autocomplete="off">
+        </div>
+      </div>
+      <div id="published" class="panel"></div>
+    </section>
+    <section id="view-subs" hidden>
+      <h2>المرسلات — ما وصل من المورّدين (يدوي حتى يخدم البوت)</h2>
+      <div class="panel">
+        <div class="brand-row">
+          <select id="sub-status" aria-label="حالة المرسلات">
+            <option value="new" selected>جديد</option>
+            <option value="published">منشور</option>
+            <option value="skipped">متخطى</option>
+            <option value="">الكل</option>
+          </select>
+          <select id="sub-supplier" aria-label="المورّد">
+            <option value="">كل المورّدين</option>
+          </select>
+          <button type="button" id="subs-refresh" class="ghost">تحديث</button>
+        </div>
+        <p id="subs-note" class="form-error" hidden></p>
+      </div>
+      <div id="subs" class="panel"></div>
+      <button type="button" id="subs-more" class="more" hidden>عرض المزيد</button>
+      <div class="panel">
+        <h3>إضافة مرسلة يدويا</h3>
+        <div class="fields">
+          <label class="stack">المورّد
+            <select id="m-supplier"></select>
+          </label>
+          <label class="stack">الصورة (اسم الملف)
+            <input id="m-image" placeholder="123_photo_1.jpg" dir="ltr">
+          </label>
+          <label class="stack span-2">النص
+            <textarea id="m-text" rows="2" placeholder="نص المنتج"></textarea>
+          </label>
+        </div>
+        <p id="m-error" class="form-error" hidden></p>
+        <div class="editor-actions">
+          <button type="button" id="m-add" class="primary">أضف للمرسلات</button>
+        </div>
+      </div>
+    </section>
+    <section id="view-supp" hidden>
+      <div id="supplier-directory">
+        <div class="crm-title-row">
+          <div>
+            <h2>الموردون والفوترة</h2>
+            <p class="muted">الأداء كيدار خارج Jemlix. هنا كتسجل الاتفاق، الأداءات والمتابعة.</p>
+          </div>
+        </div>
+        <div id="billing-overview" class="billing-overview"></div>
+        <div class="panel crm-toolbar">
+          <input id="supp-q" type="search" placeholder="قلب بالاسم، واتساب أو المتجر" autocomplete="off">
+          <select id="supp-billing-filter" aria-label="حالة الفوترة">
+            <option value="">كل حالات الفوترة</option>
+            <option value="attention">خاص المتابعة</option>
+            <option value="overdue">متأخر</option>
+            <option value="due_soon">قريب يخلص</option>
+            <option value="active">خالص / نشط</option>
+            <option value="trial">تجريبي</option>
+            <option value="unconfigured">بلا اشتراك</option>
+            <option value="paused">موقوف</option>
+            <option value="churned">غادر</option>
+          </select>
+        </div>
+        <form id="supp-form" class="panel">
+          <h3>مورّد جديد</h3>
+          <div class="fields">
+            <label class="stack">الاسم
+              <input id="s-name" placeholder="مثلا: سعيد" autocomplete="off">
+            </label>
+            <label class="stack">واتساب
+              <input id="s-whatsapp" placeholder="0612345678" inputmode="tel" dir="ltr">
+            </label>
+            <label class="stack">سيلغ المتجر
+              <input id="s-slug" placeholder="said-shop" dir="ltr">
+            </label>
+            <label class="stack">معرف تيليغرام (اختياري)
+              <input id="s-tg" placeholder="123456789" inputmode="numeric" dir="ltr">
+            </label>
+          </div>
+          <p id="supp-error" class="form-error" hidden></p>
+          <div class="editor-actions">
+            <button type="submit" class="primary">زيد مورّد</button>
+          </div>
+        </form>
+        <div id="suppliers" class="panel"></div>
+      </div>
+
+      <div id="supplier-detail" hidden>
+        <div class="crm-title-row">
+          <button type="button" id="supplier-detail-back" class="ghost">رجوع للموردين</button>
+          <div class="crm-title-copy">
+            <h2 id="supplier-detail-name">ملف المورّد</h2>
+            <p id="supplier-detail-meta" class="muted"></p>
+          </div>
+          <button type="button" id="supplier-revoke" class="danger">خرج جميع الأجهزة</button>
+        </div>
+        <div id="supplier-summary" class="billing-overview"></div>
+
+        <form id="channel-link-form" class="panel">
+          <h3>ربط القناة يدويا</h3>
+          <p class="muted crm-hint">استعمل هاد الاختيار غير إلا فشل الربط التلقائي. خذ معرف القناة من إشعار البوت أو من اقتراح القناة فالسجل، وتأكد من المورّد قبل الحفظ.</p>
+          <div class="fields">
+            <label class="stack">معرف القناة
+              <input id="link-channel-id" placeholder="-1001234567890" inputmode="numeric" dir="ltr">
+            </label>
+            <label class="stack">اسم القناة
+              <input id="link-channel-title" placeholder="اسم قناة تيليغرام">
+            </label>
+            <label class="stack span-2">سيلغ المتجر
+              <input id="link-channel-slug" placeholder="supplier-store" dir="ltr">
+            </label>
+          </div>
+          <p id="channel-link-error" class="form-error" hidden></p>
+          <div class="editor-actions">
+            <button type="submit" class="primary">تأكيد الربط اليدوي</button>
+          </div>
+        </form>
+
+        <div class="crm-columns">
+          <form id="subscription-form" class="panel">
+            <div class="brand-row">
+              <h3>الاتفاق والاشتراك</h3>
+              <span id="billing-phase" class="billing-badge"></span>
+            </div>
+            <div class="fields">
+              <label class="stack">اسم العرض
+                <input id="b-plan" placeholder="عرض شهري">
+              </label>
+              <label class="stack">المبلغ بالدرهم
+                <input id="b-amount" inputmode="decimal" placeholder="500.00" dir="ltr">
+              </label>
+              <label class="stack">الدورة
+                <select id="b-cycle">
+                  <option value="monthly">شهري</option>
+                  <option value="quarterly">كل 3 شهور</option>
+                  <option value="yearly">سنوي</option>
+                  <option value="custom">مخصص</option>
+                </select>
+              </label>
+              <label class="stack">حالة الاشتراك
+                <select id="b-status">
+                  <option value="trial">تجريبي</option>
+                  <option value="active">نشط</option>
+                  <option value="paused">موقوف</option>
+                  <option value="churned">غادر</option>
+                </select>
+              </label>
+              <label class="stack">بداية الفترة
+                <input id="b-period-start" type="date">
+              </label>
+              <label class="stack">نهاية الفترة
+                <input id="b-period-end" type="date">
+              </label>
+              <label class="stack">الأداء الجاي
+                <input id="b-next-due" type="date">
+              </label>
+              <label class="stack">أيام السماح
+                <input id="b-grace" type="number" min="0" max="90" value="3">
+              </label>
+              <label class="stack">نهاية التجربة
+                <input id="b-trial-end" type="date">
+              </label>
+              <label class="stack">المتابعة الجاية
+                <input id="b-follow-up" type="date">
+              </label>
+              <label class="stack span-2">ملاحظة الاتفاق
+                <textarea id="b-note" rows="3" placeholder="شنو داخل فالعرض، الاستثناءات، الاتفاق الشفوي..."></textarea>
+              </label>
+            </div>
+            <p id="b-error" class="form-error" hidden></p>
+            <div class="editor-actions">
+              <button type="submit" class="primary">حفظ الاشتراك</button>
+            </div>
+          </form>
+
+          <form id="payment-form" class="panel">
+            <h3>سجّل أداء خارجي</h3>
+            <p class="muted crm-hint">Jemlix ما كيستخلصش الفلوس؛ غير كيسجل شنو تخلص ومتى.</p>
+            <div class="fields">
+              <label class="stack">المبلغ بالدرهم
+                <input id="pay-amount" inputmode="decimal" placeholder="500.00" dir="ltr">
+              </label>
+              <label class="stack">تاريخ الأداء
+                <input id="pay-date" type="date">
+              </label>
+              <label class="stack">الطريقة
+                <select id="pay-method">
+                  <option value="cash">نقدا</option>
+                  <option value="bank">تحويل بنكي</option>
+                  <option value="wafacash">Wafacash</option>
+                  <option value="cmi">CMI</option>
+                  <option value="other">أخرى</option>
+                </select>
+              </label>
+              <label class="stack">مرجع الأداء
+                <input id="pay-reference" placeholder="رقم الوصل أو التحويل" dir="ltr">
+              </label>
+              <label class="stack">بداية الفترة المؤداة
+                <input id="pay-period-start" type="date">
+              </label>
+              <label class="stack">نهاية الفترة المؤداة
+                <input id="pay-period-end" type="date">
+              </label>
+              <label class="stack span-2">موعد الأداء التالي
+                <input id="pay-next-due" type="date">
+              </label>
+              <label class="stack span-2">ملاحظة
+                <textarea id="pay-note" rows="2" placeholder="مثلا: خلص جزء وباقي 100 درهم"></textarea>
+              </label>
+            </div>
+            <p id="pay-error" class="form-error" hidden></p>
+            <div class="editor-actions">
+              <button type="submit" class="primary">تسجيل الأداء</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="crm-columns">
+          <section class="panel">
+            <h3>سجل الأداءات</h3>
+            <div id="payment-history"></div>
+          </section>
+          <section class="panel">
+            <h3>المتابعة والنشاط</h3>
+            <form id="timeline-note-form" class="crm-note-form">
+              <textarea id="timeline-note" rows="2" placeholder="زيد ملاحظة: عيطنا ليه، طلب مهلة، بدل العرض..."></textarea>
+              <button type="submit" class="ghost">زيد ملاحظة</button>
+            </form>
+            <p id="timeline-error" class="form-error" hidden></p>
+            <div id="supplier-timeline" class="timeline"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+    <section id="view-posts">
+    <section>
+      <h2>القنوات والمتاجر</h2>
+      <p class="muted">رابط كل متجر: <span class="mono">/c/slug</span> — غيّر السيلغ واضغط حفظ.</p>
+      <div id="channels"></div>
+    </section>
+    <p id="empty" class="empty">اختار بوسط أو كتر من اللائحة و اضغط «كوّن منتج».</p>
+    <form id="editor" hidden>
+      <p id="edit-badge" class="badge-moq" hidden></p>
+      <div class="panel">
+        <h3>نص البوسطات المختارة</h3>
+        <div id="post-text" class="post-text"></div>
+        <p id="post-phone" class="muted" hidden></p>
+        <p id="source" class="muted"></p>
+      </div>
+      <div class="panel">
+        <div class="brand-row">
+          <h3>الصور المختارة (<span id="img-count">0</span>)</h3>
+          <button type="button" id="btn-add-img" class="text-btn">زيد صور</button>
+        </div>
+        <div id="sel-images" class="sel-images"></div>
+        <div id="picker" class="picker" hidden>
+          <input id="img-q" type="search" placeholder="بحث فاسم الصورة" autocomplete="off">
+          <div id="img-grid"></div>
+          <button type="button" id="img-more" class="more" hidden>المزيد</button>
+        </div>
+      </div>
+      <div class="panel fields">
+        <label class="stack span-2">اسم المنتج
+          <input id="f-name" required placeholder="مثلا: تيشورت قطنية">
+        </label>
+        <label class="stack">الفئة
+          <select id="f-category"></select>
+        </label>
+        <label class="stack">الثمن (درهم)
+          <input id="f-price" inputmode="decimal" placeholder="45">
+        </label>
+        <label class="check">الثمن عند الطلب
+          <input id="f-por" type="checkbox">
+        </label>
+        <label class="stack">الستوك
+          <input id="f-stock" placeholder="100 قطعة">
+        </label>
+        <label class="stack">الحد الأدنى
+          <input id="f-moq" inputmode="numeric" placeholder="10">
+        </label>
+        <label class="stack span-2">الوصف
+          <textarea id="f-desc" rows="3"></textarea>
+        </label>
+      </div>
+      <div class="panel">
+        <div class="brand-row">
+          <h3>المواصفات (اختياري)</h3>
+          <button type="button" id="btn-add-spec" class="text-btn">زيد مواصفة</button>
+        </div>
+        <div id="specs"></div>
+      </div>
+      <div class="panel">
+        <h3>التواصل اللي كيجي فالكاطالوغ</h3>
+        <div id="contact-options" class="choices"></div>
+      </div>
+      <p id="form-error" class="form-error" hidden></p>
+      <div class="editor-actions">
+        <button id="publish" class="primary" type="submit">نشر</button>
+        <button id="save-draft" class="ghost" type="button">حفظ كمسودة</button>
+        <button id="cancel" class="ghost" type="button">إلغاء</button>
+      </div>
+    </form>
+    </section>
+  </main>
+</div>
+<img id="preview" alt="" hidden>
+<script type="module" src="/admin.js"></script>
+</body>
+</html>

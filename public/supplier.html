@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#14221c">
+<meta name="robots" content="noindex,nofollow">
+<title>Jemlix — إدارة المنتجات</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="supplier-portal">
+<header class="supplier-bar">
+  <a class="wordmark" href="/">Jemlix</a>
+  <span class="role" data-sp="portal">مساحة المورّد</span>
+  <span class="grow"></span>
+  <span id="supplier-name" class="supplier-name"></span>
+  <div class="lang" role="group" aria-label="Langue">
+    <button type="button" data-lang="ar">عربية</button>
+    <button type="button" data-lang="fr">FR</button>
+  </div>
+  <button id="supplier-logout" type="button" class="text-btn" data-sp="logout" hidden>تسجيل الخروج</button>
+</header>
+
+<main class="supplier-wrap">
+  <section id="supplier-login" class="supplier-login-card">
+    <span class="login-mark">6</span>
+    <h1 data-sp="loginTitle">أدخل رمز الدخول</h1>
+    <p data-sp-html="loginHelp">أرسل <bdi dir="ltr">/code</bdi> إلى البوت على تيليغرام، ثم انسخ الرمز الذي سيظهر لك.</p>
+    <form id="supplier-login-form">
+      <label class="sr" for="supplier-code" data-sp="loginCode">رمز الدخول</label>
+      <input id="supplier-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" dir="ltr" required autofocus>
+      <button class="primary" type="submit" data-sp="login">دخول</button>
+    </form>
+    <p class="muted" data-sp="codeValidity">الرمز صالح لمدة 10 دقائق ولاستخدام واحد.</p>
+    <p id="supplier-login-error" class="form-error" hidden></p>
+  </section>
+
+  <section id="supplier-app" hidden>
+    <div class="supplier-heading">
+      <div>
+        <p class="eyebrow" data-sp="yourProducts">منتجاتك</p>
+        <h1 id="supplier-store-name" data-sp="store">المتجر</h1>
+        <p id="supplier-summary" class="muted"></p>
+      </div>
+      <a id="supplier-store-link" class="ghost supplier-store-link" href="/" target="_blank" rel="noopener noreferrer" data-sp="viewStore" hidden>عرض المتجر ↗</a>
+    </div>
+
+    <div class="supplier-toolbar">
+      <label class="supplier-search">
+        <span class="sr" data-sp="search">بحث</span>
+        <input id="supplier-q" type="search" data-sp-ph="searchPlaceholder" placeholder="البحث بالاسم أو الوصف" autocomplete="off">
+      </label>
+      <select id="supplier-status" aria-label="حالة المنتجات">
+        <option value="all" data-sp="allProducts">جميع المنتجات</option>
+        <option value="active" data-sp="visibleProducts">المنتجات الظاهرة</option>
+        <option value="hidden" data-sp="hiddenProducts">المنتجات المخفية</option>
+      </select>
+    </div>
+
+    <p id="supplier-note" class="form-error" hidden></p>
+    <div id="supplier-products" class="supplier-products" aria-live="polite"></div>
+    <div class="supplier-pager">
+      <button id="supplier-prev" type="button" class="ghost" data-sp="previous">السابق</button>
+      <span id="supplier-page" class="muted"></span>
+      <button id="supplier-next" type="button" class="ghost" data-sp="next">التالي</button>
+    </div>
+  </section>
+</main>
+
+<dialog id="supplier-editor" class="supplier-dialog">
+  <form id="supplier-edit-form">
+    <div class="supplier-dialog-head">
+      <div>
+        <p class="eyebrow" data-sp="editProduct">تعديل المنتج</p>
+        <h2 id="supplier-edit-name"></h2>
+      </div>
+      <button id="supplier-edit-close" type="button" class="text-btn" aria-label="إغلاق">✕</button>
+    </div>
+    <div class="supplier-edit-grid">
+      <label class="stack"><span data-sp="price">السعر (درهم)</span>
+        <input id="supplier-edit-price" inputmode="decimal" placeholder="45">
+      </label>
+      <label class="choice supplier-check">
+        <input id="supplier-edit-por" type="checkbox">
+        <span data-sp="priceOnRequest">السعر عند الطلب</span>
+      </label>
+      <label class="stack"><span data-sp="stock">المخزون</span>
+        <input id="supplier-edit-stock" data-sp-ph="stockPlaceholder" placeholder="متوفر / 100 قطعة">
+      </label>
+      <label class="stack"><span data-sp="minimum">الحد الأدنى للطلب</span>
+        <input id="supplier-edit-moq" inputmode="numeric" placeholder="10">
+      </label>
+      <label class="stack span-2"><span data-sp="description">الوصف</span>
+        <textarea id="supplier-edit-desc" rows="5"></textarea>
+      </label>
+      <label class="choice supplier-check span-2">
+        <input id="supplier-edit-published" type="checkbox">
+        <span data-sp="visibleInCatalog">ظاهر في الدليل</span>
+      </label>
+    </div>
+    <p id="supplier-edit-error" class="form-error" hidden></p>
+    <div class="supplier-dialog-actions">
+      <button id="supplier-edit-cancel" type="button" class="ghost" data-sp="cancel">إلغاء</button>
+      <button id="supplier-edit-save" type="submit" class="primary" data-sp="save">حفظ التغييرات</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="/supplier.js"></script>
+</body>
+</html>

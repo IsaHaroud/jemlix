@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#14221c">
+<title>Jemlix — تسجيل الدخول</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="login">
+<main class="login-box">
+  <a class="wordmark" href="/">Jemlix</a>
+  <p class="muted">منطقة الإدارة — دخل الرمز</p>
+  <form id="login">
+    <input name="token" type="password" placeholder="الرمز" autocomplete="current-password" autofocus>
+    <button type="submit" class="primary">دخول</button>
+  </form>
+  <p id="error" class="form-error" hidden></p>
+</main>
+<script type="module" src="/login.js"></script>
+</body>
+</html>

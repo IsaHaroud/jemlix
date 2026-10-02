@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#14221c">
+<meta name="description" content="Jemlix — دليل تجارة الجملة.">
+<title>Jemlix — منتج</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <div class="brand-row">
+      <a class="wordmark" href="/">Jemlix</a>
+      <nav class="site-nav" aria-label="Jemlix">
+        <a href="/about" data-i18n="about">من نحن</a>
+        <a href="/blog" data-i18n="blog">المدونة</a>
+      </nav>
+      <span class="grow"></span>
+      <div class="lang" role="group" aria-label="Langue">
+        <button type="button" data-lang="ar">عربية</button>
+        <button type="button" data-lang="fr">FR</button>
+      </div>
+    </div>
+  </div>
+</header>
+<main class="wrap">
+  <nav class="crumbs"><a href="/">Jemlix</a><span>/</span><span id="crumb-name">منتج</span></nav>
+  <p id="notfound" class="empty" hidden><strong data-i18n="notFound">هذا المنتج غير موجود.</strong></p>
+  <article id="product" class="product" hidden>
+    <div class="product-gallery">
+      <div class="gallery-main"><img id="g-main" alt=""></div>
+      <div id="g-thumbs" class="gallery-thumbs"></div>
+    </div>
+    <div class="product-info">
+      <h1 id="g-name"></h1>
+      <p id="g-channel" class="muted"></p>
+      <p id="g-price" class="product-price"></p>
+      <dl class="facts" id="g-facts">
+        <div><dt data-i18n="moq">الحد الأدنى</dt><dd id="g-moq"></dd></div>
+        <div><dt data-i18n="stock">المخزون</dt><dd id="g-stock"></dd></div>
+      </dl>
+      <a id="g-contact" class="contact" hidden target="_blank" rel="noopener noreferrer"></a>
+      <section class="specs" id="g-specs" hidden>
+        <h2 data-i18n="specs">المواصفات</h2>
+        <table id="g-specs-table"></table>
+      </section>
+      <section class="desc" id="g-desc" hidden>
+        <h2 data-i18n="desc">الوصف</h2>
+        <p id="g-desc-text"></p>
+      </section>
+    </div>
+  </article>
+  <div id="sticky-buy" class="sticky-buy" hidden>
+    <p id="s-price" class="product-price"></p>
+    <a id="s-contact" class="contact" hidden target="_blank" rel="noopener noreferrer"></a>
+  </div>
+</main>
+<div class="foot-bar">
+  <footer class="wrap foot">
+    <div class="footer-main">
+      <div class="footer-brand-block">
+        <a class="footer-logo" href="/">Jemlix</a>
+        <p data-i18n="footerPitch">نحوّل محتوى مورّدي تيليغرام إلى متاجر جملة منظمة، ونساعدهم على إبقاء القناة والدليل متزامنين.</p>
+        <span class="footer-pill" data-i18n="footerTag">Telegram → Catalog</span>
+      </div>
+      <nav class="footer-col" aria-label="Jemlix">
+        <h2 data-i18n="footerExplore">اكتشف</h2>
+        <a href="/" data-i18n="footerCatalog">دليل الجملة</a>
+        <a href="/#stores" data-i18n="footerStores">متاجر الموردين</a>
+        <a href="/about" data-i18n="about">من نحن</a>
+        <a href="/blog" data-i18n="blog">المدونة</a>
+      </nav>
+      <nav class="footer-col" aria-label="Suppliers">
+        <h2 data-i18n="footerForSuppliers">للموردين</h2>
+        <a href="/about" data-i18n="footerService">كيف تعمل الخدمة</a>
+        <a href="/supplier" data-i18n="footerAccess">دخول إدارة المنتجات</a>
+      </nav>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 Jemlix</span>
+      <span data-i18n="footerLegal">Jemlix وسيط لعرض المنتجات. يتم الطلب والدفع مباشرة مع المورّد.</span>
+    </div>
+  </footer>
+</div>
+<script type="module" src="/product.js"></script>
+</body>
+</html>

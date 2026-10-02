@@ -1,0 +1,35 @@
+[Unit]
+Description=Jemlix catalog and Telegram bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=jemla
+Group=jemla
+WorkingDirectory=/opt/jemla
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/jemla/jemla.env
+ExecStart=/usr/local/bin/bun run src/index.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0027
+
+# The application only needs to write its SQLite and media directories.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/jemla/data /opt/jemla/media
+
+[Install]
+WantedBy=multi-user.target

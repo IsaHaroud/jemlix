@@ -1,0 +1,21 @@
+{
+  "name": "jemlix",
+  "version": "0.1.0",
+  "description": "Jemlix - wholesale catalog built from Telegram channel exports (manual curation, no LLM)",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "import": "bun run src/import.ts",
+    "import:dry": "bun run src/import.ts --dry",
+    "thumbs": "bun run src/thumbs.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "dependencies": {
+    "grammy": "^1.46.0"
+  }
+}
