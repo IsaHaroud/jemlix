@@ -64,7 +64,7 @@ function cardHtml(product) {
           ${file ? `<img src="${thumbUrl(file)}" data-full="${mediaUrl(file)}" alt="${alt}" loading="lazy" decoding="async">` : ""}
         </span>
         <span class="body">
-          <span class="name">${alt}</span>
+          <span class="name" dir="auto">${alt}</span>
           ${
             price || product.moq
               ? `<span class="meta">

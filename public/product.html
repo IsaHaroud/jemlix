@@ -9,20 +9,17 @@
 <link rel="icon" href="/jemlix-mark.png" type="image/png">
 <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="product-page">
 <header class="site">
   <div class="wrap">
     <div class="brand-row">
       <a class="wordmark" href="/" aria-label="Jemlix"><img class="brand-logo" src="/jemlix-logo.png" alt=""></a>
-      <nav class="site-nav" aria-label="Jemlix">
+      <button class="menu-toggle" type="button" aria-controls="site-nav" aria-expanded="false" data-i18n-aria="menu"><span aria-hidden="true">☰</span></button>
+      <nav id="site-nav" class="site-nav" aria-label="Jemlix">
         <a href="/about" data-i18n="about">من نحن</a>
         <a href="/blog" data-i18n="blog">المدونة</a>
       </nav>
       <span class="grow"></span>
-      <div class="lang" role="group" aria-label="Langue">
-        <button type="button" data-lang="ar">عربية</button>
-        <button type="button" data-lang="fr">FR</button>
-      </div>
     </div>
   </div>
 </header>
@@ -35,7 +32,7 @@
       <div id="g-thumbs" class="gallery-thumbs"></div>
     </div>
     <div class="product-info">
-      <h1 id="g-name"></h1>
+      <h1 id="g-name" dir="auto"></h1>
       <p id="g-channel" class="muted"></p>
       <p id="g-price" class="product-price"></p>
       <dl class="facts" id="g-facts">
@@ -78,6 +75,13 @@
         <a href="/about" data-i18n="footerService">كيف تعمل الخدمة</a>
         <a href="/supplier" data-i18n="footerAccess">دخول إدارة المنتجات</a>
       </nav>
+    </div>
+    <div class="footer-locale">
+      <span data-i18n="language">اللغة</span>
+      <div class="lang" role="group" aria-label="Langue">
+        <button type="button" data-lang="ar">عربية</button>
+        <button type="button" data-lang="fr">FR</button>
+      </div>
     </div>
     <div class="footer-bottom">
       <span>© 2026 Jemlix</span>

@@ -70,6 +70,7 @@ const STR = {
     search: "البحث في الدليل",
     allCats: "كل المنتجات",
     allCategories: "جميع الفئات",
+    menu: "القائمة",
     categoriesTitle: "تصفّح جميع الفئات",
     close: "إغلاق",
     empty: "لا توجد منتجات حالياً",
@@ -95,6 +96,7 @@ const STR = {
     footerCatalog: "دليل الجملة",
     footerStores: "متاجر الموردين",
     footerForSuppliers: "للموردين",
+    language: "اللغة",
     footerService: "كيف تعمل الخدمة",
     footerAccess: "دخول إدارة المنتجات",
     footerLegal: "Jemlix وسيط لعرض المنتجات. يتم الطلب والدفع مباشرة مع المورّد.",
@@ -111,6 +113,7 @@ const STR = {
     search: "Rechercher dans le catalogue",
     allCats: "Tous les produits",
     allCategories: "Toutes les catégories",
+    menu: "Menu",
     categoriesTitle: "Parcourir toutes les catégories",
     close: "Fermer",
     empty: "Aucun produit pour le moment",
@@ -136,6 +139,7 @@ const STR = {
     footerCatalog: "Catalogue de gros",
     footerStores: "Boutiques fournisseurs",
     footerForSuppliers: "Pour les fournisseurs",
+    language: "Langue",
     footerService: "Comment fonctionne le service",
     footerAccess: "Gérer mes produits",
     footerLegal: "Jemlix est un intermédiaire de catalogue. Commande et paiement se font directement avec le fournisseur.",
@@ -216,4 +220,19 @@ export function initLang() {
   }
   document.addEventListener("jemla:lang", sync);
   sync();
+
+  const menuButton = document.querySelector(".menu-toggle");
+  const menu = document.getElementById("site-nav");
+  if (menuButton && menu) {
+    const closeMenu = () => menuButton.setAttribute("aria-expanded", "false");
+    menuButton.addEventListener("click", () => {
+      menuButton.setAttribute("aria-expanded", String(menuButton.getAttribute("aria-expanded") !== "true"));
+    });
+    document.addEventListener("click", (event) => {
+      if (!menuButton.contains(event.target) && !menu.contains(event.target)) closeMenu();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeMenu();
+    });
+  }
 }

@@ -14,16 +14,13 @@
   <div class="wrap">
     <div class="brand-row">
       <a class="wordmark" href="/" aria-label="Jemlix"><img class="brand-logo" src="/jemlix-logo.png" alt=""></a>
-      <nav class="site-nav" aria-label="Jemlix">
+      <button class="menu-toggle" type="button" aria-controls="site-nav" aria-expanded="false" data-i18n-aria="menu"><span aria-hidden="true">☰</span></button>
+      <nav id="site-nav" class="site-nav" aria-label="Jemlix">
         <a href="/" data-i18n="footerCatalog">دليل الجملة</a>
         <a href="/about" aria-current="page" data-i18n="about">من نحن</a>
         <a href="/blog" data-i18n="blog">المدونة</a>
       </nav>
       <span class="grow"></span>
-      <div class="lang" role="group" aria-label="Langue">
-        <button type="button" data-lang="ar">عربية</button>
-        <button type="button" data-lang="fr">FR</button>
-      </div>
     </div>
   </div>
 </header>
@@ -127,6 +124,13 @@
       <div class="footer-brand-block"><a class="footer-logo" href="/" aria-label="Jemlix"><img class="brand-logo" src="/jemlix-logo.png" alt=""></a><p data-i18n="footerPitch">نحوّل محتوى مورّدي تيليغرام إلى متاجر جملة منظمة، ونساعدهم على إبقاء القناة والدليل متزامنين.</p><span class="footer-pill" data-i18n="footerTag">Telegram → Catalogue</span></div>
       <nav class="footer-col" aria-label="Jemlix"><h2 data-i18n="footerExplore">اكتشف</h2><a href="/" data-i18n="footerCatalog">دليل الجملة</a><a href="/#stores" data-i18n="footerStores">متاجر الموردين</a><a href="/about" data-i18n="about">من نحن</a><a href="/blog" data-i18n="blog">المدونة</a></nav>
       <nav class="footer-col" aria-label="Suppliers"><h2 data-i18n="footerForSuppliers">للموردين</h2><a href="/about" data-i18n="footerService">كيف تعمل الخدمة</a><a href="/supplier" data-i18n="footerAccess">دخول إدارة المنتجات</a></nav>
+    </div>
+    <div class="footer-locale">
+      <span data-i18n="language">اللغة</span>
+      <div class="lang" role="group" aria-label="Langue">
+        <button type="button" data-lang="ar">عربية</button>
+        <button type="button" data-lang="fr">FR</button>
+      </div>
     </div>
     <div class="footer-bottom"><span>© 2026 Jemlix</span><span data-i18n="footerLegal">Jemlix وسيط لعرض المنتجات. يتم الطلب والدفع مباشرة مع المورّد.</span></div>
   </footer>

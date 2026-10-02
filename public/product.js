@@ -112,6 +112,7 @@ function render() {
       sc.textContent = contact.label;
       sc.className = `contact ${contact.kind}`;
       sp.textContent = price;
+      sp.hidden = !price;
     }
   } else {
     c.hidden = true;
