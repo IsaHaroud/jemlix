@@ -19,6 +19,11 @@ let sortMode = "newest";
 const sortSel = document.getElementById("sort");
 const minPriceEl = document.getElementById("min-price");
 const maxPriceEl = document.getElementById("max-price");
+const filtersDialog = document.getElementById("filters-dialog");
+const sortOptionsEl = document.getElementById("sort-options");
+const minPriceM = document.getElementById("min-price-m");
+const maxPriceM = document.getElementById("max-price-m");
+const filtersTrigger = document.getElementById("filters-open");
 
 function syncCatalogMeta() {
   if (storeSlug()) return;
@@ -177,6 +182,18 @@ function renderCards() {
   const list = visible();
   countEl.textContent = countLabel(list.length);
   none.hidden = list.length > 0;
+  if (!list.length) {
+    // Restore the filter-empty copy (a load error may have overwritten it).
+    const strong = none.querySelector("strong");
+    if (strong) strong.textContent = t("empty");
+    const sub = none.querySelector("p");
+    if (sub) sub.textContent = t("emptySub");
+    const btn = none.querySelector("button");
+    if (btn) {
+      btn.hidden = false;
+      btn.textContent = t("retrySearch");
+    }
+  }
   grid.innerHTML = list.map(cardHtml).join("");
 }
 
@@ -190,6 +207,7 @@ function renderStores(list, currentSlug) {
   }
   sec.hidden = false;
   box.replaceChildren();
+  const TG_SVG = `<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M21.9 4.6 2.7 12.1c-.8.3-.8 1.4.1 1.6l4.7 1.5 1.8 5.6c.3.9 1.4 1 1.9.2l2.6-3.1 5 3.7c.6.5 1.6.1 1.8-.7l2.1-14.5c.2-1-.9-1.9-1.8-1.8z"/></svg>`;
   for (const ch of channels) {
     const a = document.createElement("a");
     a.className = "store-chip";
@@ -202,6 +220,11 @@ function renderStores(list, currentSlug) {
     const nm = document.createElement("span");
     nm.className = "store-chip-name";
     nm.textContent = ch.name;
+    const tg = document.createElement("span");
+    tg.className = "store-tg";
+    tg.innerHTML = TG_SVG;
+    tg.title = "Telegram";
+    nm.append(tg);
     const ct = document.createElement("span");
     ct.className = "store-chip-count";
     ct.textContent = countLabel(ch.count);
@@ -259,12 +282,44 @@ function renderToolbar() {
       return opt;
     }),
   );
+  // Bottom-sheet mirror (mobile): radio list kept in sync with the toolbar.
+  sortOptionsEl.replaceChildren(
+    ...SORT_MODES.map((mode) => {
+      const label = document.createElement("label");
+      label.className = "sort-option";
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "sort";
+      input.value = mode;
+      input.checked = mode === current;
+      input.addEventListener("change", () => {
+        sortMode = mode;
+        sortSel.value = mode;
+        syncTriggerState();
+        renderCards();
+      });
+      const span = document.createElement("span");
+      span.textContent = sortLabel(mode);
+      label.append(input, span);
+      return label;
+    }),
+  );
+  syncTriggerState();
+}
+
+function syncTriggerState() {
+  const active =
+    sortMode !== "newest" || minPriceEl.value !== "" || maxPriceEl.value !== "";
+  filtersTrigger.classList.toggle("has-filters", active);
+  filtersTrigger.setAttribute("aria-pressed", String(active));
 }
 
 function resetFilters() {
   search.value = "";
   minPriceEl.value = "";
   maxPriceEl.value = "";
+  minPriceM.value = "";
+  maxPriceM.value = "";
   sortMode = "newest";
   renderToolbar();
   chooseCategory("");
@@ -276,9 +331,38 @@ sortSel.addEventListener("change", () => {
   sortMode = sortSel.value;
   renderCards();
 });
-minPriceEl.addEventListener("input", renderCards);
-maxPriceEl.addEventListener("input", renderCards);
+minPriceEl.addEventListener("input", () => { syncTriggerState(); renderCards(); });
+maxPriceEl.addEventListener("input", () => { syncTriggerState(); renderCards(); });
 document.getElementById("reset-filters").addEventListener("click", resetFilters);
+document.getElementById("empty-reset").addEventListener("click", resetFilters);
+
+// Bottom sheet (mobile): two-way mirrors of the toolbar controls.
+sortSel.addEventListener("change", () => {
+  sortMode = sortSel.value;
+  renderToolbar();
+  renderCards();
+});
+minPriceM.addEventListener("input", () => {
+  minPriceEl.value = minPriceM.value;
+  syncTriggerState();
+  renderCards();
+});
+maxPriceM.addEventListener("input", () => {
+  maxPriceEl.value = maxPriceM.value;
+  syncTriggerState();
+  renderCards();
+});
+filtersTrigger.addEventListener("click", () => {
+  minPriceM.value = minPriceEl.value;
+  maxPriceM.value = maxPriceEl.value;
+  filtersDialog.showModal();
+});
+document.getElementById("filters-close").addEventListener("click", () => filtersDialog.close());
+document.getElementById("filters-apply").addEventListener("click", () => filtersDialog.close());
+document.getElementById("filters-reset").addEventListener("click", resetFilters);
+filtersDialog.addEventListener("click", (event) => {
+  if (event.target === filtersDialog) filtersDialog.close();
+});
 
 // card navigation (inner links like the store link keep their own target)
 grid.addEventListener("click", (event) => {
@@ -373,8 +457,15 @@ async function load() {
     countEl.textContent = "";
     none.hidden = false;
     const strong = none.querySelector("strong");
-    if (strong) strong.textContent = t("loadError");
-    else none.textContent = t("loadError");
+    if (strong) {
+      strong.textContent = t("loadError");
+      const sub = none.querySelector("p");
+      if (sub) sub.textContent = "";
+      const btn = none.querySelector("button");
+      if (btn) btn.hidden = true;
+    } else {
+      none.textContent = t("loadError");
+    }
   }
 }
 

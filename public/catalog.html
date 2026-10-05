@@ -13,8 +13,12 @@
 <header class="site">
   <div class="wrap">
     <div class="brand-row">
-      <a class="wordmark" href="/" aria-label="Jemlix"><img class="brand-logo" src="/jemlix-logo.png" alt=""></a>
       <button class="menu-toggle" type="button" aria-controls="site-nav" aria-expanded="false" data-i18n-aria="menu"><span aria-hidden="true">☰</span></button>
+      <a class="wordmark brand-center" href="/" aria-label="Jemlix"><img class="brand-logo" src="/jemlix-logo.png" alt=""></a>
+      <div class="lang lang-compact" role="group" aria-label="Langue">
+        <button type="button" data-lang="ar">ع</button>
+        <button type="button" data-lang="fr">FR</button>
+      </div>
       <nav id="site-nav" class="site-nav" aria-label="Jemlix">
         <a href="/about" data-i18n="about">من نحن</a>
         <a href="/blog" data-i18n="blog">المدونة</a>
@@ -28,7 +32,7 @@
       <button id="categories-open" class="categories-trigger" type="button" aria-haspopup="dialog" data-i18n="allCategories">
         جميع الفئات
       </button>
-      <div id="cats" class="cats" role="toolbar" aria-label="الفئات" data-i18n-aria="allCategories"></div>
+      <div id="cats" class="cats fade-x" role="toolbar" aria-label="الفئات" data-i18n-aria="allCategories"></div>
     </div>
   </div>
 </header>
@@ -53,9 +57,23 @@
   </div>
 </div>
 <main class="wrap">
+  <section class="hero" aria-label="Jemlix">
+    <div class="hero-copy">
+      <span class="hero-flow" aria-hidden="true">
+        <span class="hero-tg">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21.9 4.6 2.7 12.1c-.8.3-.8 1.4.1 1.6l4.7 1.5 1.8 5.6c.3.9 1.4 1 1.9.2l2.6-3.1 5 3.7c.6.5 1.6.1 1.8-.7l2.1-14.5c.2-1-.9-1.9-1.8-1.8zM8.6 13.4l9.5-6.6c.2-.1.4.1.2.3l-7.8 7-.3 3-1.6-3.7z"/></svg>
+        </span>
+        <span class="hero-arrow"></span>
+        <span class="hero-mini"><i></i><i></i><i></i></span>
+      </span>
+      <h1 data-i18n="heroTitle">منتجات متنوعة من موردين موثوقين</h1>
+      <p data-i18n="heroSub">اكتشف منتجات الجملة بسهولة من أفضل الموردين</p>
+      <a class="primary hero-cta" href="#grid" data-i18n="heroCta">اكتشف المنتجات</a>
+    </div>
+  </section>
   <section id="stores" hidden>
-    <h2 class="sec-title" data-i18n="stores">المتاجر</h2>
-    <div id="store-list" class="stores"></div>
+    <h2 class="sec-title" data-i18n="storesTitle">اكتشف متاجر الموردين</h2>
+    <div id="store-list" class="stores fade-x"></div>
   </section>
   <p id="count" class="count">جارٍ التحميل</p>
   <div class="shop-toolbar" role="search">
@@ -68,15 +86,56 @@
     <input id="max-price" class="price-input" type="number" min="0" inputmode="decimal" data-i18n-ph="maxPrice" placeholder="أقصى سعر">
     <button id="reset-filters" class="ghost small" type="button" data-i18n="resetFilters">مسح التصفية</button>
   </div>
+  <button id="filters-open" class="filters-trigger" type="button" aria-haspopup="dialog">
+    <span aria-hidden="true">⚙</span> <span data-i18n="filterSort">تصفية وفرز</span>
+  </button>
+  <dialog id="filters-dialog" class="filters-dialog" aria-labelledby="filters-title">
+    <div class="filters-dialog-head">
+      <h2 id="filters-title" data-i18n="filterSort">تصفية وفرز</h2>
+      <button id="filters-close" class="text-btn" type="button" aria-label="إغلاق" data-i18n-aria="close">✕</button>
+    </div>
+    <div class="filters-dialog-body">
+      <p class="filters-label" data-i18n="sort">ترتيب</p>
+      <div id="sort-options" class="sort-options" role="radiogroup"></div>
+      <p class="filters-label" data-i18n="priceRange">نطاق السعر</p>
+      <div class="price-range">
+        <label class="sr" for="min-price-m" data-i18n="minPrice">أدنى سعر</label>
+        <input id="min-price-m" class="price-input" type="number" min="0" inputmode="decimal" data-i18n-ph="minPrice" placeholder="أدنى سعر">
+        <span class="price-sep" aria-hidden="true">–</span>
+        <label class="sr" for="max-price-m" data-i18n="maxPrice">أقصى سعر</label>
+        <input id="max-price-m" class="price-input" type="number" min="0" inputmode="decimal" data-i18n-ph="maxPrice" placeholder="أقصى سعر">
+      </div>
+      <div class="filters-dialog-actions">
+        <button id="filters-reset" class="ghost" type="button" data-i18n="resetFilters">مسح التصفية</button>
+        <button id="filters-apply" class="primary" type="button" data-i18n="showResults">عرض النتائج</button>
+      </div>
+    </div>
+  </dialog>
   <div id="grid" class="grid"></div>
-  <div id="none" class="empty" hidden><strong data-i18n="empty">لا توجد منتجات حالياً</strong></div>
+  <div id="none" class="empty" hidden>
+    <svg class="empty-art" viewBox="0 0 120 90" fill="none" aria-hidden="true">
+      <rect x="14" y="18" width="44" height="54" rx="8" fill="#fff" stroke="#e6e4df" stroke-width="2"/>
+      <rect x="24" y="30" width="24" height="16" rx="4" fill="#fff0e4"/>
+      <rect x="24" y="50" width="24" height="4" rx="2" fill="#e6e4df"/>
+      <rect x="24" y="58" width="16" height="4" rx="2" fill="#e6e4df"/>
+      <rect x="62" y="10" width="44" height="54" rx="8" fill="#fff" stroke="#ff6b00" stroke-width="2"/>
+      <rect x="72" y="22" width="24" height="16" rx="4" fill="#fff0e4"/>
+      <rect x="72" y="42" width="24" height="4" rx="2" fill="#ffad0d"/>
+      <rect x="72" y="50" width="16" height="4" rx="2" fill="#e6e4df"/>
+      <circle cx="88" cy="70" r="16" fill="#151823"/>
+      <path d="M81 70h9M86 65v10" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+    <strong data-i18n="empty">لا توجد منتجات حالياً</strong>
+    <p data-i18n="emptySub">لم يتم العثور على أي منتج يطابق معايير البحث الخاصة بك.</p>
+    <button id="empty-reset" class="ghost small" type="button" data-i18n="retrySearch">إعادة البحث</button>
+  </div>
 </main>
 <div class="foot-bar">
   <footer class="wrap foot">
     <div class="footer-main">
       <div class="footer-brand-block">
         <a class="footer-logo" href="/" aria-label="Jemlix"><img class="brand-logo" src="/jemlix-logo.png" alt=""></a>
-        <p data-i18n="footerPitch">نحوّل محتوى مورّدي تيليغرام إلى متاجر جملة منظمة، ونساعدهم على إبقاء القناة والدليل متزامنين.</p>
+        <p class="footer-statement" data-i18n="footerStatement">سوق الجملة المغربي، مرتب في مكان واحد.</p><p data-i18n="footerPitch">نحوّل محتوى مورّدي تيليغرام إلى متاجر جملة منظمة، ونساعدهم على إبقاء القناة والدليل متزامنين.</p>
         <span class="footer-pill" data-i18n="footerTag">Telegram → Catalog</span>
       </div>
       <nav class="footer-col" aria-label="Jemlix">

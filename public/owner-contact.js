@@ -71,4 +71,19 @@ export async function initOwnerContact() {
   };
   paintFooter();
   document.addEventListener("jemla:lang", paintFooter);
+
+  // Social row: Telegram bot icon only — the one account guaranteed real
+  // (BOT_USERNAME from server config). No dead Instagram/Facebook links.
+  const locale = document.querySelector(".footer-locale");
+  if (locale && tg && !locale.querySelector("[data-tg-social]")) {
+    const a = document.createElement("a");
+    a.dataset.tgSocial = "1";
+    a.className = "footer-social";
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.href = tg;
+    a.setAttribute("aria-label", "Telegram");
+    a.innerHTML = `<svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M21.9 4.6 2.7 12.1c-.8.3-.8 1.4.1 1.6l4.7 1.5 1.8 5.6c.3.9 1.4 1 1.9.2l2.6-3.1 5 3.7c.6.5 1.6.1 1.8-.7l2.1-14.5c.2-1-.9-1.9-1.8-1.8z"/></svg>`;
+    locale.append(a);
+  }
 }
