@@ -282,6 +282,9 @@ export function initLang() {
     menuButton.addEventListener("click", () => {
       setMenuOpen(menuButton.getAttribute("aria-expanded") !== "true");
     });
+    for (const closer of document.querySelectorAll(".menu-close")) {
+      closer.addEventListener("click", closeMenu);
+    }
     document.addEventListener("click", (event) => {
       if (!menuButton.contains(event.target) && !menu.contains(event.target)) closeMenu();
     });
