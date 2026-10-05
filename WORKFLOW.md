@@ -332,3 +332,24 @@ can use `/code` without help, and the measured manual work fits the proposed
 pricing. Before the catalog becomes difficult to recreate, enable and test the
 prepared backup workflow. Otherwise fix the workflow or pricing before adding
 more suppliers.
+
+## Admin dashboard (2026-10-03)
+
+- Dashboard is English-only (Arabic stays on the buyer catalog + supplier bot/portal).
+- Channel linking is bot-admin-only: forwarded posts no longer link anything.
+- Admin home is Overview → Queue → Products → Submissions → Suppliers → Payments,
+  modeled on the autowork control center (stat cards, due-soon list, supplier
+  drawer with subscription/payments/notes/timeline, record-payment modal).
+- Supplier slug is set by the admin from the linked channel name ("Use channel name").
+
+## Money flow (2026-10-05)
+
+- Estimate first: record a Catalog build payment before any subscription exists
+  (upfront estimate, e.g. ~200 products x 2 MAD). Subscription payments still
+  require a plan.
+- After the build: drawer Catalog build panel shows exact (published x rate),
+  paid, remaining — one click records the balance.
+- Kinds: onboarding vs subscription. Subscription periods/revenue ignore
+  onboarding payments.
+- Daily analytics: product/store page views counted per day (bots skipped),
+  per-supplier drawer panel + Overview totals back the monthly pitch.

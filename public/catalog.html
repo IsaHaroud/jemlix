@@ -58,6 +58,16 @@
     <div id="store-list" class="stores"></div>
   </section>
   <p id="count" class="count">جارٍ التحميل</p>
+  <div class="shop-toolbar" role="search">
+    <label class="sr" for="sort" data-i18n="sort">ترتيب</label>
+    <select id="sort" class="sort-select" aria-label="Sort"></select>
+    <label class="sr" for="min-price" data-i18n="minPrice">أدنى سعر</label>
+    <input id="min-price" class="price-input" type="number" min="0" inputmode="decimal" data-i18n-ph="minPrice" placeholder="أدنى سعر">
+    <span class="price-sep" aria-hidden="true">–</span>
+    <label class="sr" for="max-price" data-i18n="maxPrice">أقصى سعر</label>
+    <input id="max-price" class="price-input" type="number" min="0" inputmode="decimal" data-i18n-ph="maxPrice" placeholder="أقصى سعر">
+    <button id="reset-filters" class="ghost small" type="button" data-i18n="resetFilters">مسح التصفية</button>
+  </div>
   <div id="grid" class="grid"></div>
   <div id="none" class="empty" hidden><strong data-i18n="empty">لا توجد منتجات حالياً</strong></div>
 </main>

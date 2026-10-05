@@ -145,8 +145,8 @@ function recordSupplierFailure(ip: string): void {
 const listPublished = db.query(`SELECT * FROM products WHERE published = 1 ORDER BY id DESC`);
 const listAllProducts = db.query(`SELECT * FROM products ORDER BY id DESC`);
 const insertProduct = db.query(`
-  INSERT INTO products (name, category, price, price_on_request, stock, moq, description, images, contact, contact_type, channel, source_channel, specs, supplier_id, published, created_at)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+  INSERT INTO products (name, category, price, price_on_request, price_tiers, stock, moq, description, images, contact, contact_type, channel, source_channel, specs, supplier_id, published, created_at)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
 `);
 const linkPost = db.query(`UPDATE posts SET product_id = ?, status = 'done' WHERE id = ?`);
 const unlinkPosts = db.query(`UPDATE posts SET status = 'new', product_id = NULL WHERE product_id = ?`);
@@ -208,7 +208,42 @@ function notifySupplier(telegramId: number, text: string): void {
 }
 
 function parseRow(r: any) {
-  return { ...r, images: JSON.parse(r.images || "[]"), specs: JSON.parse(r.specs || "[]") };
+  return {
+    ...r,
+    images: JSON.parse(r.images || "[]"),
+    specs: JSON.parse(r.specs || "[]"),
+    price_tiers: JSON.parse(r.price_tiers || "[]"),
+  };
+}
+
+// ---- daily analytics (tiny counters, no raw events) ----
+const BOT_UA = /bot|crawl|spider|preview|telegram|whatsapp|facebookexternalhit/i;
+const trackView = db.query(
+  `INSERT INTO page_views (day, supplier_id, product_id, channel_slug, views)
+   VALUES (date('now'), ?, ?, ?, 1)
+   ON CONFLICT(day, supplier_id, product_id, channel_slug) DO UPDATE SET views = views + 1`,
+);
+
+function supplierIdForChannel(channelName: string): number | null {
+  if (!channelName) return null;
+  const byTitle = db.query(`SELECT id FROM suppliers WHERE channel_title = ?`).get(channelName) as any;
+  if (byTitle) return byTitle.id;
+  const chan = db.query(`SELECT slug FROM channels WHERE name = ?`).get(channelName) as any;
+  if (chan?.slug) {
+    const bySlug = db.query(`SELECT id FROM suppliers WHERE channel_slug = ?`).get(chan.slug) as any;
+    if (bySlug) return bySlug.id;
+  }
+  return null;
+}
+
+function track(req: Request, supplierId: number | null, productId: number, channelSlug: string): void {
+  try {
+    if (!supplierId) return;
+    if (BOT_UA.test(req.headers.get("user-agent") || "")) return;
+    trackView.run(supplierId, productId, channelSlug || "");
+  } catch {
+    // analytics never breaks pages
+  }
 }
 
 function imageOk(name: string): boolean {
@@ -376,7 +411,8 @@ function supplierDetail(id: number): any | null {
     .slice(0, 100);
   const currentPaid = subscription
     ? payments
-      .filter((payment) => (!subscription.period_start || payment.period_start === subscription.period_start)
+      .filter((payment) => payment.kind !== "onboarding"
+        && (!subscription.period_start || payment.period_start === subscription.period_start)
         && (!subscription.period_end || payment.period_end === subscription.period_end))
       .reduce((sum, payment) => sum + Number(payment.amount_minor || 0), 0)
     : 0;
@@ -394,6 +430,7 @@ function supplierDetail(id: number): any | null {
       products: Number(counts?.products || 0),
       published_products: Number(counts?.published_products || 0),
       total_paid_minor: payments.reduce((sum, payment) => sum + Number(payment.amount_minor || 0), 0),
+      onboarding_paid_minor: payments.filter((p) => p.kind === "onboarding").reduce((sum, payment) => sum + Number(payment.amount_minor || 0), 0),
       current_paid_minor: currentPaid,
       outstanding_minor: subscription ? Math.max(Number(subscription.amount_minor || 0) - currentPaid, 0) : 0,
     },
@@ -528,6 +565,8 @@ async function api(req: Request, url: URL): Promise<Response> {
       const parsed = parseSupplierProductPatch(await readBody(req));
       if (!parsed.ok) return json({ error: parsed.error }, 400);
       const change = parsed.value;
+      const cur = parseRow(current);
+      const tiers = change.price_tiers ?? cur.price_tiers ?? [];
       const next = {
         price: change.price ?? current.price ?? "",
         price_on_request: change.price_on_request ?? !!current.price_on_request,
@@ -536,7 +575,10 @@ async function api(req: Request, url: URL): Promise<Response> {
         description: change.description ?? current.description ?? "",
         published: change.published ?? !!current.published,
       };
-      if (next.published && !next.price && !next.price_on_request) {
+      if (next.price_on_request && tiers.length > 0) {
+        return json({ error: "Price on request cannot have price tiers" }, 400);
+      }
+      if (next.published && !next.price && !next.price_on_request && tiers.length === 0) {
         return json({ error: "دخل الثمن أو اختار الثمن عند الطلب" }, 400);
       }
       if (change.published === true && !next.moq) {
@@ -545,10 +587,10 @@ async function api(req: Request, url: URL): Promise<Response> {
       const save = db.transaction(() => {
         const info = db.query(
           `UPDATE products
-           SET price = ?, price_on_request = ?, stock = ?, moq = ?, description = ?, published = ?
+           SET price = ?, price_on_request = ?, price_tiers = ?, stock = ?, moq = ?, description = ?, published = ?
            WHERE id = ? AND supplier_id = ?`,
         ).run(
-          next.price, next.price_on_request ? 1 : 0, next.stock, next.moq,
+          next.price, next.price_on_request ? 1 : 0, JSON.stringify(tiers), next.stock, next.moq,
           next.description, next.published ? 1 : 0, id, supplier.id,
         );
         if (info.changes !== 1) throw new Error("supplier product ownership changed");
@@ -580,7 +622,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     return json({ ok: true });
   }
   if (p === "/api/config" && method === "GET") {
-    return json({ defaultWhatsapp: config.defaultWhatsapp, defaultChannel: config.defaultChannel });
+    return json({ defaultWhatsapp: config.defaultWhatsapp, defaultChannel: config.defaultChannel, ownerWhatsapp: config.ownerWhatsapp, botUsername: config.botUsername });
   }
   if (p === "/api/admin/products" && method === "GET") {
     const supplierIdRaw = url.searchParams.get("supplier_id") || "";
@@ -599,6 +641,55 @@ async function api(req: Request, url: URL): Promise<Response> {
     return json(rows);
   }
 
+  // ---- overview stats (admin) ----
+  if (p === "/api/admin/stats" && method === "GET") {    const suppliers = suppliersWithBilling();
+    const counts = { total: suppliers.length, active: 0, pending: 0, paused: 0 };
+    for (const s of suppliers) {
+      if (s.status === "active") counts.active += 1;
+      else if (s.status === "pending") counts.pending += 1;
+      else if (s.status === "paused") counts.paused += 1;
+    }
+    const prodCounts = db.query(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN published = 1 THEN 1 ELSE 0 END), 0) AS published,
+              COALESCE(SUM(CASE WHEN published = 0 THEN 1 ELSE 0 END), 0) AS drafts
+       FROM products`,
+    ).get() as any;
+    const newSubs = (db.query(`SELECT COUNT(*) AS c FROM submissions WHERE status = 'new'`).get() as any).c;
+    const payAgg = db.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(amount_minor), 0) AS total_minor FROM supplier_payments`,
+    ).get() as any;
+    const today = new Date().toISOString().slice(0, 10);
+    const viewsToday = (db.query(`SELECT COALESCE(SUM(views), 0) AS v FROM page_views WHERE day = ?`).get(today) as any).v;
+    const views7d = (db.query(`SELECT COALESCE(SUM(views), 0) AS v FROM page_views WHERE day >= date('now', '-6 days')`).get() as any).v;
+    const attention = suppliers
+      .filter((s) => ["trial_ending", "trial_ended", "due_soon", "due_today", "grace", "overdue"].includes(s.phase))
+      .map((s) => ({
+        id: s.id, name: s.name, phase: s.phase, days_until_due: s.days_until_due,
+        next_due_at: s.next_due_at, trial_ends_at: s.trial_ends_at, plan_name: s.plan_name,
+      }))
+      .sort((a, b) => (a.days_until_due ?? 999) - (b.days_until_due ?? 999));
+    return json({
+      suppliers: counts,
+      products: { total: prodCounts.total, published: prodCounts.published, drafts: prodCounts.drafts },
+      submissions_new: newSubs,
+      views: { today: viewsToday, last_7d: views7d },
+      payments: { count: payAgg.count, total_minor: payAgg.total_minor, currency: "MAD" },
+      attention,
+    });
+  }
+
+  // ---- all payments (admin) ----
+  if (p === "/api/admin/payments" && method === "GET") {
+    const limit = intParam(url.searchParams.get("limit"), 100, 500);
+    const rows = db.query(
+      `SELECT sp.*, s.name AS supplier_name FROM supplier_payments sp
+       LEFT JOIN suppliers s ON s.id = sp.supplier_id
+       ORDER BY sp.paid_at DESC, sp.id DESC LIMIT ?`,
+    ).all(limit);
+    return json(rows);
+  }
+
   // ---- suppliers (admin) ----
   if (p === "/api/suppliers" && method === "GET") {
     return json(suppliersWithBilling());
@@ -610,17 +701,17 @@ async function api(req: Request, url: URL): Promise<Response> {
     const v = result.value;
     if (v.telegram_id != null) {
       const taken = db.query(`SELECT id FROM suppliers WHERE telegram_id = ?`).get(v.telegram_id);
-      if (taken) return json({ error: "هذا المورّد مسجل already" }, 409);
+      if (taken) return json({ error: "Supplier already registered" }, 409);
     }
     if (v.channel_slug) {
       const taken = db.query(`SELECT id FROM suppliers WHERE channel_slug = ?`).get(v.channel_slug);
-      if (taken) return json({ error: "السيلغ مستعمل" }, 409);
+      if (taken) return json({ error: "Slug already in use" }, 409);
     }
     const info = insertSupplier.run(v.telegram_id, v.name, v.username, v.whatsapp, "", "", v.channel_slug, v.status);
     const id = Number(info.lastInsertRowid);
     addSupplierEvent(id, "supplier_created", { status: v.status, name: v.name });
     if (v.channel_slug) ensureStoreChannel(v.channel_slug, v.name);
-    if (v.status === "pending") notifyAdmin(`مورّد جديد بانتظار المراجعة: ${v.name || `#${id}`}`);
+    if (v.status === "pending") notifyAdmin(`New supplier pending review: ${v.name || `#${id}`}`);
     return json({ ok: true, id });
   }
 
@@ -628,6 +719,38 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (supplierDetailMatch && method === "GET") {
     const detail = supplierDetail(Number(supplierDetailMatch[1]));
     return detail ? json(detail) : json({ error: "not found" }, 404);
+  }
+
+  const supplierAnalyticsMatch = p.match(/^\/api\/suppliers\/(\d+)\/analytics$/);
+  if (supplierAnalyticsMatch && method === "GET") {
+    const id = Number(supplierAnalyticsMatch[1]);
+    if (!getSupplier.get(id)) return json({ error: "not found" }, 404);
+    const days = intParam(url.searchParams.get("days"), 30, 365);
+    const byDay = db.query(
+      `SELECT day, SUM(views) AS views FROM page_views
+       WHERE supplier_id = ? AND day >= date('now', '-' || ? || ' days')
+       GROUP BY day ORDER BY day`,
+    ).all(id, days) as { day: string; views: number }[];
+    const top = db.query(
+      `SELECT product_id, SUM(views) AS views FROM page_views
+       WHERE supplier_id = ? AND product_id != 0 AND day >= date('now', '-' || ? || ' days')
+       GROUP BY product_id ORDER BY views DESC LIMIT 10`,
+    ).all(id, days) as { product_id: number; views: number }[];
+    const names = new Map<number, string>();
+    if (top.length) {
+      const marks = top.map(() => "?").join(",");
+      const rows = db.query(`SELECT id, name FROM products WHERE id IN (${marks})`).all(...top.map((t) => t.product_id)) as any[];
+      for (const r of rows) names.set(r.id, r.name);
+    }
+    const total = byDay.reduce((n, d) => n + Number(d.views || 0), 0);
+    const today = new Date().toISOString().slice(0, 10);
+    return json({
+      days,
+      total,
+      today: byDay.find((d) => d.day === today)?.views ?? 0,
+      by_day: byDay,
+      top_products: top.map((t) => ({ id: t.product_id, name: names.get(t.product_id) || `#${t.product_id}`, views: t.views })),
+    });
   }
 
   const supplierSubscriptionMatch = p.match(/^\/api\/suppliers\/(\d+)\/subscription$/);
@@ -676,31 +799,35 @@ async function api(req: Request, url: URL): Promise<Response> {
     const id = Number(supplierPaymentsMatch[1]);
     if (!getSupplier.get(id)) return json({ error: "not found" }, 404);
     const subscription = db.query(`SELECT * FROM supplier_subscriptions WHERE supplier_id = ?`).get(id) as any;
-    if (!subscription) return json({ error: "سجّل الاشتراك قبل الأداء" }, 409);
     const parsed = parsePayment(await readBody(req));
     if (!parsed.ok) return json({ error: parsed.error }, 400);
     const v = parsed.value;
+    // Onboarding (catalog-build) payments come first — estimate before any plan.
+    // Subscription payments need a plan so periods extend correctly.
+    if (v.kind !== "onboarding" && !subscription) return json({ error: "Create a subscription before recording a payment" }, 409);
     const save = db.transaction(() => {
       const info = db.query(
         `INSERT INTO supplier_payments
-          (supplier_id, subscription_id, amount_minor, currency, paid_at, method,
+          (supplier_id, subscription_id, amount_minor, currency, paid_at, method, kind,
            external_reference, note, period_start, period_end)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
-        id, subscription.id, v.amount_minor, v.currency, v.paid_at, v.method,
+        id, subscription?.id ?? null, v.amount_minor, v.currency, v.paid_at, v.method, v.kind,
         v.external_reference, v.note, v.period_start, v.period_end,
       );
-      db.query(
-        `UPDATE supplier_subscriptions SET
-           period_start = COALESCE(?, period_start), period_end = COALESCE(?, period_end),
-           next_due_at = COALESCE(?, next_due_at),
-           status = CASE WHEN status = 'trial' THEN 'active' ELSE status END,
-           updated_at = datetime('now')
-         WHERE supplier_id = ?`,
-      ).run(v.period_start, v.period_end, v.next_due_at, id);
+      if (subscription) {
+        db.query(
+          `UPDATE supplier_subscriptions SET
+             period_start = COALESCE(?, period_start), period_end = COALESCE(?, period_end),
+             next_due_at = COALESCE(?, next_due_at),
+             status = CASE WHEN status = 'trial' THEN 'active' ELSE status END,
+             updated_at = datetime('now')
+           WHERE supplier_id = ?`,
+        ).run(v.period_start, v.period_end, v.next_due_at, id);
+      }
       addSupplierEvent(id, "payment_recorded", {
         payment_id: Number(info.lastInsertRowid), amount_minor: v.amount_minor,
-        currency: v.currency, paid_at: v.paid_at, method: v.method,
+        currency: v.currency, paid_at: v.paid_at, method: v.method, kind: v.kind,
         external_reference: v.external_reference, period_start: v.period_start,
         period_end: v.period_end, next_due_at: v.next_due_at,
       });
@@ -715,7 +842,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     if (!getSupplier.get(id)) return json({ error: "not found" }, 404);
     const body = await readBody(req);
     const text = typeof body?.text === "string" ? body.text.trim() : "";
-    if (!text || text.length > 2000) return json({ error: "الملاحظة غير صالحة" }, 400);
+    if (!text || text.length > 2000) return json({ error: "Invalid note" }, 400);
     addSupplierEvent(id, "admin_note", { text });
     return json({ ok: true, detail: supplierDetail(id) });
   }
@@ -739,11 +866,11 @@ async function api(req: Request, url: URL): Promise<Response> {
     const v = result.value;
     if (v.telegram_id !== undefined && v.telegram_id != null) {
       const taken = db.query(`SELECT id FROM suppliers WHERE telegram_id = ? AND id != ?`).get(v.telegram_id, id);
-      if (taken) return json({ error: "هذا المعرف مسجل" }, 409);
+      if (taken) return json({ error: "Telegram ID already taken" }, 409);
     }
     if (v.channel_slug !== undefined && v.channel_slug) {
       const taken = db.query(`SELECT id FROM suppliers WHERE channel_slug = ? AND id != ?`).get(v.channel_slug, id);
-      if (taken) return json({ error: "السيلغ مستعمل" }, 409);
+      if (taken) return json({ error: "Slug already in use" }, 409);
       const chanTaken = db.query(`SELECT name FROM channels WHERE slug = ?`).get(v.channel_slug) as any;
       if (chanTaken && chanTaken.name !== current.channel_title && chanTaken.name !== current.name && chanTaken.name !== v.channel_title) {
         // slug belongs to a different channel name; admin owns slugs so allow but keep mapping via ensure
@@ -752,9 +879,9 @@ async function api(req: Request, url: URL): Promise<Response> {
     if (v.channel_id !== undefined || v.channel_title !== undefined) {
       const channelId = v.channel_id !== undefined ? v.channel_id : current.channel_id;
       const title = v.channel_title !== undefined ? v.channel_title : current.channel_title;
-      if (!channelId || !title) return json({ error: "دخل معرف القناة واسمها" }, 400);
+      if (!channelId || !title) return json({ error: "Channel ID and name are required" }, 400);
       const taken = db.query(`SELECT id, name FROM suppliers WHERE channel_id = ? AND id != ?`).get(channelId, id) as any;
-      if (taken) return json({ error: `القناة مربوطة من قبل مع ${taken.name || `المورّد #${taken.id}`}` }, 409);
+      if (taken) return json({ error: `Channel already linked to ${taken.name || `supplier #${taken.id}`}` }, 409);
     }
     const sets: string[] = [];
     const args: unknown[] = [];
@@ -773,6 +900,19 @@ async function api(req: Request, url: URL): Promise<Response> {
         : v,
     );
     if (updated?.channel_slug) ensureStoreChannel(updated.channel_slug, updated.channel_title || updated.name);
+    // Store just went live: first transition to active *with* a slug. Tell the
+    // supplier once (full URL — relative paths are not tappable in Telegram).
+    const wasLive = current.status === "active" && !!current.channel_slug;
+    const isLive = updated?.status === "active" && !!updated?.channel_slug;
+    if (isLive && !wasLive) {
+      addSupplierEvent(id, "store_live", { channel_slug: updated.channel_slug });
+      if (updated?.telegram_id && config.publicBaseUrl) {
+        notifySupplier(
+          updated.telegram_id,
+          `مبروك، المتجر ديالك ولا خدام: ${config.publicBaseUrl}/c/${updated.channel_slug}\nصيفط المنتجات هنا (تصويرة + وصف) باش يبانو فالكاتالوغ.`,
+        );
+      }
+    }
     return json({ ok: true });
   }
 
@@ -806,7 +946,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     const result = parseSubmissionCreate(input, { imageOk });
     if (!result.ok) return json({ error: result.error }, 400);
     const supplier = getSupplier.get(result.value.supplier_id);
-    if (!supplier) return json({ error: "المورّد غير موجود" }, 404);
+    if (!supplier) return json({ error: "Supplier not found" }, 404);
     const info = db
       .query(`INSERT INTO submissions (supplier_id, tg_message_id, text, image, status) VALUES (?,?,?,?, 'new')`)
       .run(result.value.supplier_id, result.value.tg_message_id, result.value.text, result.value.image || null);
@@ -833,25 +973,25 @@ async function api(req: Request, url: URL): Promise<Response> {
     let supplierId: number | null = null;
     if (raw.supplier_id != null && raw.supplier_id !== "") {
       supplierId = Number(raw.supplier_id);
-      if (!Number.isInteger(supplierId) || supplierId <= 0) return json({ error: "المورّد غير صالح" }, 400);
-      if (!getSupplier.get(supplierId)) return json({ error: "المورّد غير موجود" }, 404);
+      if (!Number.isInteger(supplierId) || supplierId <= 0) return json({ error: "Invalid supplier" }, 400);
+      if (!getSupplier.get(supplierId)) return json({ error: "Supplier not found" }, 404);
     }
-    if (published && supplierId == null) return json({ error: "المورّد إجباري للنشر" }, 400);
+    if (published && supplierId == null) return json({ error: "A supplier is required to publish" }, 400);
     let submissionIds: number[] = [];
     if (raw.submission_ids != null) {
       if (!Array.isArray(raw.submission_ids) || raw.submission_ids.length > 20) {
-        return json({ error: "المرسلات غير صالحة" }, 400);
+        return json({ error: "Invalid submissions" }, 400);
       }
       for (const sid of raw.submission_ids) {
         if (typeof sid !== "number" || !Number.isInteger(sid) || sid <= 0) {
-          return json({ error: "المرسلات غير صالحة" }, 400);
+          return json({ error: "Invalid submissions" }, 400);
         }
         if (!submissionIds.includes(sid)) submissionIds.push(sid);
       }
     }
     const create = db.transaction(() => {
       const info = insertProduct.run(
-        v.name, v.category, v.price, v.priceOnRequest ? 1 : 0, v.stock, v.moq, v.description,
+        v.name, v.category, v.price, v.priceOnRequest ? 1 : 0, JSON.stringify(v.priceTiers), v.stock, v.moq, v.description,
         JSON.stringify(v.images), v.contact, v.contactType, "", v.sourceChannel,
         JSON.stringify(v.specs), supplierId, published,
       );
@@ -883,7 +1023,7 @@ async function api(req: Request, url: URL): Promise<Response> {
     if (!current) return json({ error: "not found" }, 404);
     const input = await readBody(req);
     if (input == null || typeof input !== "object" || Array.isArray(input)) {
-      return json({ error: "JSON غير صالح" }, 400);
+      return json({ error: "Invalid JSON" }, 400);
     }
     const body = input as Record<string, unknown>;
     const cur = parseRow(current);
@@ -892,6 +1032,7 @@ async function api(req: Request, url: URL): Promise<Response> {
       category: body.category ?? cur.category,
       price: body.price ?? cur.price,
       price_on_request: body.price_on_request ?? cur.price_on_request ?? 0,
+      price_tiers: body.price_tiers ?? cur.price_tiers ?? [],
       stock: body.stock ?? cur.stock,
       moq: body.moq ?? cur.moq,
       description: body.description ?? cur.description,
@@ -908,18 +1049,18 @@ async function api(req: Request, url: URL): Promise<Response> {
     let supplierId: number | null = cur.supplier_id ?? null;
     if (body.supplier_id != null && body.supplier_id !== "") {
       supplierId = Number(body.supplier_id);
-      if (!Number.isInteger(supplierId) || supplierId <= 0) return json({ error: "المورّد غير صالح" }, 400);
-      if (!getSupplier.get(supplierId)) return json({ error: "المورّد غير موجود" }, 404);
+      if (!Number.isInteger(supplierId) || supplierId <= 0) return json({ error: "Invalid supplier" }, 400);
+      if (!getSupplier.get(supplierId)) return json({ error: "Supplier not found" }, 404);
     }
-    if (targetPublished && supplierId == null) return json({ error: "المورّد إجباري للنشر" }, 400);
+    if (targetPublished && supplierId == null) return json({ error: "A supplier is required to publish" }, 400);
     const result = parseProduct(merged, { categories: config.categories, imageOk }, targetPublished ? "publish" : "draft");
     if (!result.ok) return json({ error: result.error }, 400);
     const v = result.value;
     const save = db.transaction(() => {
       db.query(
-        `UPDATE products SET name = ?, category = ?, price = ?, price_on_request = ?, stock = ?, moq = ?, description = ?, images = ?, contact = ?, contact_type = ?, source_channel = ?, specs = ?, supplier_id = ?, published = ? WHERE id = ?`,
+        `UPDATE products SET name = ?, category = ?, price = ?, price_on_request = ?, price_tiers = ?, stock = ?, moq = ?, description = ?, images = ?, contact = ?, contact_type = ?, source_channel = ?, specs = ?, supplier_id = ?, published = ? WHERE id = ?`,
       ).run(
-        v.name, v.category, v.price, v.priceOnRequest ? 1 : 0, v.stock, v.moq, v.description,
+        v.name, v.category, v.price, v.priceOnRequest ? 1 : 0, JSON.stringify(v.priceTiers), v.stock, v.moq, v.description,
         JSON.stringify(v.images), v.contact, v.contactType, v.sourceChannel,
         JSON.stringify(v.specs), supplierId, targetPublished, id,
       );
@@ -1000,17 +1141,20 @@ const server = Bun.serve({
         if (hiddenStores().slugs.has(storeMatch[1]!)) return new Response("Not Found", { status: 404 });
         const row = db.query(`SELECT slug FROM channels WHERE slug = ?`).get(storeMatch[1]);
         if (!row) return new Response("Not Found", { status: 404 });
+        const owner = db.query(`SELECT id FROM suppliers WHERE channel_slug = ?`).get(storeMatch[1]) as any;
+        track(req, owner?.id ?? null, 0, storeMatch[1]!);
         return (await file("public/catalog.html", "no-cache")) ?? new Response("Not Found", { status: 404 });
       }
 
       // product page: /p/:id
       const productMatch = p.match(/^\/p\/(\d+)$/);
       if (productMatch) {
-        const row = db.query(`SELECT source_channel FROM products WHERE published = 1 AND id = ?`).get(Number(productMatch[1])) as any;
+        const row = db.query(`SELECT supplier_id, source_channel FROM products WHERE published = 1 AND id = ?`).get(Number(productMatch[1])) as any;
         if (!row) return new Response("Not Found", { status: 404 });
         if (row.source_channel && hiddenStores().names.has(row.source_channel)) {
           return new Response("Not Found", { status: 404 });
         }
+        track(req, row.supplier_id ?? supplierIdForChannel(row.source_channel), Number(productMatch[1]), "");
         return (await file("public/product.html", "no-cache")) ?? new Response("Not Found", { status: 404 });
       }
 

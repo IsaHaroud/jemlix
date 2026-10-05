@@ -15,5 +15,5 @@ form.addEventListener("submit", async (event) => {
     return;
   }
   error.hidden = false;
-  error.textContent = res.status === 429 ? "محاولات كثيرة. عاود من بعد." : "الرمز غير صحيح.";
+  error.textContent = res.status === 429 ? "Too many attempts. Try again later." : "Wrong code.";
 });

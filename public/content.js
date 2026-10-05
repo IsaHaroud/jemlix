@@ -1,4 +1,5 @@
 import { getLang, initLang, t } from "./i18n.js";
+import { initOwnerContact } from "./owner-contact.js";
 
 function syncContentLanguage() {
   const active = getLang();
@@ -16,3 +17,4 @@ function syncContentLanguage() {
 document.addEventListener("jemla:lang", syncContentLanguage);
 initLang();
 syncContentLanguage();
+initOwnerContact();

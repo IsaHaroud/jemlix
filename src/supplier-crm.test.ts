@@ -8,6 +8,14 @@ test("billing phases include due, grace and overdue", () => {
   expect(billingPhase(base, "2026-10-15").phase).toBe("overdue");
 });
 
+test("payment kinds: onboarding vs subscription", () => {
+  expect(parsePayment({ amount_minor: 10000, paid_at: "2026-10-03", method: "cash", kind: "onboarding" }).ok).toBe(true);
+  expect(parsePayment({ amount_minor: 10000, paid_at: "2026-10-03", method: "cash" }).ok).toBe(true);
+  if (parsePayment({ amount_minor: 10000, paid_at: "2026-10-03", method: "cash" }).ok) {
+    expect(parsePayment({ amount_minor: 10000, paid_at: "2026-10-03", method: "cash" }).value.kind).toBe("subscription");
+  }
+  expect(parsePayment({ amount_minor: 10000, paid_at: "2026-10-03", method: "cash", kind: "setup" }).ok).toBe(false);
+});
 test("subscription and payment validation", () => {
   expect(parseSubscription({ plan_name: "Pro", amount_minor: 30000, currency: "MAD", billing_cycle: "monthly", grace_days: 3, status: "active" }).ok).toBe(true);
   expect(parseSubscription({ amount_minor: -1, billing_cycle: "weekly", grace_days: 3, status: "active" }).ok).toBe(false);

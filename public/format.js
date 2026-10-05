@@ -53,3 +53,39 @@ export function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+function firstNumber(value) {
+  const m = String(value ?? "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
+// All unit-price numbers on a product: base price + every tier price.
+export function priceNumbers(product) {
+  const out = [];
+  const base = firstNumber(product.price);
+  if (base !== null) out.push(base);
+  for (const tier of product.price_tiers || []) {
+    const n = firstNumber(tier.price);
+    if (n !== null) out.push(n);
+  }
+  return out;
+}
+
+// "62.27 – 64.41 MAD" for tiered products, "" when no tier prices.
+export function tierRangeLabel(tiers, currency = "د.م") {
+  const nums = [];
+  for (const tier of tiers || []) {
+    const n = firstNumber(tier.price);
+    if (n !== null) nums.push(n);
+  }
+  if (!nums.length) return "";
+  const lo = Math.min(...nums);
+  const hi = Math.max(...nums);
+  return lo === hi ? `${lo} ${currency}` : `${lo} – ${hi} ${currency}`;
+}
+
+export function tierQtyLabel(tier, andUp = "≥") {
+  if (tier.max_qty == null) return `${andUp}${Number(tier.min_qty).toLocaleString("en-US").replace(/,/g, " ")}`;
+  if (tier.max_qty === tier.min_qty) return `${Number(tier.min_qty).toLocaleString("en-US").replace(/,/g, " ")}`;
+  return `${Number(tier.min_qty).toLocaleString("en-US").replace(/,/g, " ")}–${Number(tier.max_qty).toLocaleString("en-US").replace(/,/g, " ")}`;
+}

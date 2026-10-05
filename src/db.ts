@@ -189,10 +189,33 @@ try {
 }
 
 try {
+  db.exec("ALTER TABLE products ADD COLUMN price_tiers TEXT DEFAULT '[]'");
+} catch {
+  // Column already exists.
+}
+
+try {
   db.exec("ALTER TABLE suppliers ADD COLUMN onboarding_step TEXT DEFAULT ''");
 } catch {
   // Column already exists.
 }
+
+try {
+  db.exec("ALTER TABLE supplier_payments ADD COLUMN kind TEXT DEFAULT 'subscription'");
+} catch {
+  // Column already exists.
+}
+
+// Daily analytics: one counter row per day × product/store (tiny, no raw events).
+db.exec(`
+CREATE TABLE IF NOT EXISTS page_views (
+  day TEXT NOT NULL,
+  supplier_id INTEGER NOT NULL DEFAULT 0,
+  product_id INTEGER NOT NULL DEFAULT 0,
+  channel_slug TEXT NOT NULL DEFAULT '',
+  views INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, supplier_id, product_id, channel_slug)
+);`);
 
 try {
   db.exec("ALTER TABLE submissions ADD COLUMN media_group_id TEXT");

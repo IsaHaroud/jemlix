@@ -7,7 +7,6 @@ import { ensureThumbs } from "./thumbs.ts";
 import { normalizeWhatsapp, whatsappOk } from "./suppliers.ts";
 import { isValidSlug } from "./slug.ts";
 import { createSupplierLoginCode, revokeAllSupplierSessions } from "./supplier-auth.ts";
-import { forwardedChannelFromMessage } from "./telegram.ts";
 
 let bot: Bot | null = null;
 let started = false;
@@ -85,6 +84,12 @@ function storeLink(s: Supplier): string {
   return s.channel_slug ? `/c/${s.channel_slug}` : "مازال ما تحددش (غادي يحددو الأدمن)";
 }
 
+// Full https URL for messages to suppliers (relative paths are not tappable in Telegram).
+export function storeUrl(s: Supplier): string {
+  if (!s.channel_slug || !config.publicBaseUrl) return "";
+  return `${config.publicBaseUrl}/c/${s.channel_slug}`;
+}
+
 async function savePhotoFile(tgId: number, supplierId: number, msgId: number, getFile: () => Promise<{ file_path?: string }>): Promise<string | null> {
   try {
     const f = await getFile();
@@ -122,7 +127,29 @@ export async function notifySupplier(telegramId: number, text: string): Promise<
   }
 }
 
-// Album buffer: Telegram delivers one message per photo; group by media_group_id.
+// One product = one message: all its photos selected together + caption.
+// This block is repeated wherever the supplier needs the rule reminded.
+const HOW_TO_SEND =
+  "باش تصيفط منتج: اختار التصاور كاملين فرسالة وحدة (تحديد متعدد) وزيد الوصف مع الثمن. كل رسالة = منتج واحد.";
+
+function snippet(text: string): string {
+  const line = String(text || "").split("\n").map((s) => s.trim()).filter(Boolean)[0] || "";
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line;
+}
+
+// Confirmation so the supplier sees exactly what was captured as ONE product.
+function intakeReply(imageCount: number, caption: string, delivery: "posted" | "failed", singleTip: boolean): string {
+  const photos = imageCount === 1 ? "تصويرة وحدة" : imageCount === 0 ? "الرسالة" : `${imageCount} تصاور`;
+  const desc = snippet(caption) || "—";
+  const lines = [
+    `توصّلنا بـ ${photos} ✅`,
+    `الوصف: ${desc}`,
+    "تسجلات كمنتج واحد، غتراجع قبل ما يبان فالكاتالوغ.",
+    delivery === "posted" ? "تنشرات فقناتك." : "ولكن ما قدرناش ننشروها فقناتك — رد البوت أدمن فالقناة.",
+  ];
+  if (singleTip) lines.push("ملاحظة: باش تزيد تصاور لنفس المنتج، صيفطهم مجموعين فرسالة وحدة.");
+  return lines.join("\n");
+}
 const albums = new Map<string, { supplierId: number; caption: string; images: string[]; msgIds: number[]; timer: ReturnType<typeof setTimeout> }>();
 const ALBUM_WAIT_MS = 2500;
 
@@ -167,12 +194,8 @@ function flushAlbum(ctx: any, groupId: string): void {
     const supplier = db.query(`SELECT * FROM suppliers WHERE id = ?`).get(album.supplierId) as Supplier;
     const delivery = supplier?.channel_id ? await postToChannel(ctx.api, supplier.channel_id, album.caption, album.images) : "failed";
     db.query(`UPDATE submissions SET delivery = ? WHERE id = ?`).run(delivery, subId);
-    await notifyAdmin(`مرسلة جديدة #${subId} من ${supplier?.name || album.supplierId} (${album.images.length} صور، ${delivery === "posted" ? "تنشرات فالقناة" : "ما تنشراتش فالقناة"}) — راجعها فالمرسلات`);
-    await ctx.reply(
-      delivery === "posted"
-        ? "تنشرات فقناتك وتسالفات للمراجعة قبل الكاتالوغ"
-        : "تحفظات للمراجعة، ولكن ما قدرناش ننشروها فقناتك — رد البوت أدمن فالقناة",
-    );
+    await notifyAdmin(`New submission #${subId} from ${supplier?.name || album.supplierId} (${album.images.length} photos, ${delivery === "posted" ? "posted to channel" : "NOT posted to channel"}) — review in Submissions`);
+    await ctx.reply(intakeReply(album.images.length, album.caption, delivery, false));
   })().catch(() => {});
 }
 
@@ -186,7 +209,7 @@ export function startBot(): Bot | null {
     if (!tgId) return;
     const existing = getSupplierByTg(tgId);
     if (existing?.status === "active") {
-      await ctx.reply(`مرحبا ${existing.name || ""} — متجرك: ${storeLink(existing)}\n/code للدخول لإدارة المنتجات · /help`);
+      await ctx.reply(`مرحبا ${existing.name || ""} — متجرك: ${storeUrl(existing) || storeLink(existing)}\n/code للدخول لإدارة المنتجات · /help`);
       return;
     }
     if (existing) {
@@ -202,7 +225,7 @@ export function startBot(): Bot | null {
         return;
       }
       if (!existing.channel_id) {
-        await ctx.reply("تسجيلك قريب يكمل — زيد البوت مدير (admin) فالقناة ديالك، ولا فورواردي شي بوسط من القناة لهنايا باش نربطوها");
+        await ctx.reply("تسجيلك قريب يكمل — زيد البوت مدير (admin) فالقناة ديالك باش نربطوها");
         return;
       }
       await ctx.reply(`حسابك قيد المراجعة (${existing.status}). ملي يتفعل غيوصلك خبر.`);
@@ -214,7 +237,7 @@ export function startBot(): Bot | null {
 
   bot.command("help", async (ctx) => {
     await ctx.reply(
-      ["/code — كود الدخول لإدارة جميع المنتجات", "/logoutall — خرج جميع الأجهزة", "/mystore — معلومات المتجر والرابط", "/mylink — رابط المتجر", "/setname <الاسم> — تغيير الاسم", "/setphone <الرقم> — تغيير واتساب", "/setslug <slug> — طلب سيلغ جديد"].join("\n"),
+      [HOW_TO_SEND, "", "/code — كود الدخول لإدارة جميع المنتجات", "/logoutall — خرج جميع الأجهزة", "/mystore — معلومات المتجر والرابط", "/mylink — رابط المتجر", "/setname <الاسم> — تغيير الاسم", "/setphone <الرقم> — تغيير واتساب", "/setslug <slug> — طلب سيلغ جديد"].join("\n"),
     );
   });
 
@@ -238,7 +261,7 @@ export function startBot(): Bot | null {
     }
     if (!config.publicBaseUrl) {
       await ctx.reply("رابط إدارة المنتجات مازال ما تجهزش — تاصل بالأدمن");
-      await notifyAdmin("PUBLIC_BASE_URL ناقص: المورّد ما قدرش يولّد رابط إدارة المنتجات");
+      await notifyAdmin("PUBLIC_BASE_URL missing: supplier could not generate a product-manage link");
       return;
     }
     try {
@@ -271,7 +294,7 @@ export function startBot(): Bot | null {
       await ctx.reply("مازال ما مسجلش — صيفط /start");
       return;
     }
-    await ctx.reply(`المتجر: ${s.channel_title || "—"}\nالرابط: ${storeLink(s)}\nالحالة: ${s.status}\nواتساب: ${s.whatsapp || "—"}`);
+    await ctx.reply(`المتجر: ${s.channel_title || "—"}\nالرابط: ${storeUrl(s) || storeLink(s)}\nالحالة: ${s.status}\nواتساب: ${s.whatsapp || "—"}`);
   });
 
   bot.command("mylink", async (ctx) => {
@@ -280,7 +303,7 @@ export function startBot(): Bot | null {
       await ctx.reply("مازال ما مسجلش — صيفط /start");
       return;
     }
-    await ctx.reply(storeLink(s));
+    await ctx.reply(storeUrl(s) || storeLink(s));
   });
 
   bot.command("myproducts", async (ctx) => {
@@ -348,8 +371,8 @@ export function startBot(): Bot | null {
     }
     db.query(`UPDATE suppliers SET channel_slug = ? WHERE id = ?`).run(value, s.id);
     ensureStoreChannel(value, s.channel_title || s.name);
-    await notifyAdmin(`طلب سيلغ جديد من ${s.name || tgId}: /c/${value}`);
-    await ctx.reply(`طلبك تسجل: /c/${value} — الأدمن غادي يراجعو`);
+    await notifyAdmin(`New slug request from ${s.name || tgId}: /c/${value}`);
+    await ctx.reply(`طلبك تسجل: ${config.publicBaseUrl ? `${config.publicBaseUrl}/c/${value}` : `/c/${value}`} — الأدمن غادي يراجعو`);
   });
 
   // A channel is confirmed only when the same Telegram account that onboarded
@@ -368,21 +391,21 @@ export function startBot(): Bot | null {
       if (s) {
         const claimed = db.query(`SELECT id, name FROM suppliers WHERE channel_id = ? AND id != ? LIMIT 1`).get(channelId, s.id) as any;
         if (claimed) {
-          await notifyAdmin(`محاولة ربط القناة ${title} بالمورّد ${s.name || fromId}، ولكن راه مربوطة من قبل مع ${claimed.name || `#${claimed.id}`}`);
+          await notifyAdmin(`Channel ${title} link attempt for supplier ${s.name || fromId}, but it is already linked to ${claimed.name || `#${claimed.id}`}`);
           await notifySupplier(fromId, "هاد القناة مربوطة من قبل بحساب آخر. تاصل بإدارة Jemlix باش نراجعوها.");
           return;
         }
         if (s.channel_id && s.channel_id !== channelId) {
-          await notifyAdmin(`المورّد ${s.name || fromId} حاول يربط قناة ثانية: ${title}. القناة الحالية: ${s.channel_title || s.channel_id}`);
+          await notifyAdmin(`Supplier ${s.name || fromId} tried to link a second channel: ${title}. Current channel: ${s.channel_title || s.channel_id}`);
           await notifySupplier(fromId, "الحساب ديالك مربوط دابا بقناة أخرى. تغيير القناة خاصو مراجعة من إدارة Jemlix.");
           return;
         }
         db.query(`UPDATE suppliers SET channel_id = ?, channel_title = ? WHERE id = ?`).run(channelId, title, s.id);
         auditSupplierEvent(s.id, "channel_linked", { channel_id: channelId, channel_title: title, confirmed_by_telegram_id: fromId });
-        await notifyAdmin(`المورّد ${s.name || fromId} ربط القناة: ${title}`);
-        await notifySupplier(fromId, `تربطات القناة ${title} — صيفط المنتجات هنا (تصويرة + وصف) وغتوصل للمراجعة`);
+        await notifyAdmin(`Supplier ${s.name || fromId} linked channel: ${title}`);
+        await notifySupplier(fromId, `تربطات القناة ${title} ✅\n${HOW_TO_SEND}`);
       } else {
-        await notifyAdmin(`بوت تزاد فقناة ${title} من طرف ${fromId} بلا مورّد مسجل`);
+        await notifyAdmin(`Bot added to channel ${title} by ${fromId} with no registered supplier`);
       }
     } catch {
       // ignore
@@ -421,37 +444,12 @@ export function startBot(): Bot | null {
       db.query(`UPDATE suppliers SET whatsapp = ?, onboarding_step = '' WHERE telegram_id = ?`).run(norm, tgId);
       clearStep(tgId);
       const s = getSupplierByTg(tgId);
-      await notifyAdmin(`مورّد جديد بانتظار المراجعة: ${s?.name || tgId} (${norm})`);
-      await ctx.reply("تسجلتي — دابا زيد البوت مدير (admin) فالقناة ديالك، ولا فورواردي شي بوسط من القناة لهنايا باش نربطوها");
+      await notifyAdmin(`New supplier pending review: ${s?.name || tgId} (${norm})`);
+      await ctx.reply(`تسجلتي — دابا زيد البوت مدير (admin) فالقناة ديالك باش نربطوها.\n\n${HOW_TO_SEND}`);
       return;
     }
 
     const msg: any = ctx.message;
-    // 2. A forward identifies a candidate channel, not ownership. Anyone can
-    // forward a public post, so confirmation still requires adding the bot as
-    // an administrator from the same Telegram account used during onboarding.
-    const forwardedChannel = forwardedChannelFromMessage(msg);
-    if (forwardedChannel) {
-      const s = getSupplierByTg(tgId);
-      if (!s) {
-        await ctx.reply("صيفط /start باش تسجل الأول");
-        return;
-      }
-      if (s.channel_id === forwardedChannel.id) {
-        await ctx.reply(`القناة ${forwardedChannel.title || "ديالك"} مربوطة من قبل ✅`);
-        return;
-      }
-      auditSupplierEvent(s.id, "channel_suggested", {
-        channel_id: forwardedChannel.id,
-        channel_title: forwardedChannel.title,
-        telegram_id: tgId,
-      });
-      await notifyAdmin(`المورّد ${s.name || tgId} اقترح القناة ${forwardedChannel.title || forwardedChannel.id}. مازال خاصو يزيد البوت أدمن بنفس الحساب باش يتأكد الربط.`);
-      await ctx.reply(
-        `عرفنا القناة ${forwardedChannel.title || ""}، ولكن الفوروار ما كيثبتش الملكية. دابا زيد البوت مدير (admin) فيها بنفس حساب تيليغرام اللي سجلتي به باش نأكد الربط.`,
-      );
-      return;
-    }
 
     // 3. Product intake from a linked supplier (albums grouped, duplicates ignored).
     const supplier = getSupplierByTg(tgId);
@@ -495,12 +493,8 @@ export function startBot(): Bot | null {
     }
     const delivery = await postToChannel(ctx.api, supplier.channel_id, caption, image ? [image] : []);
     db.query(`UPDATE submissions SET delivery = ? WHERE id = ?`).run(delivery, subId);
-    await notifyAdmin(`مرسلة جديدة #${subId} من ${supplier.name || tgId} (${delivery === "posted" ? "تنشرات فالقناة" : "ما تنشراتش فالقناة"}) — راجعها فالمرسلات`);
-    await ctx.reply(
-      delivery === "posted"
-        ? "تنشرات فقناتك وتسالفات للمراجعة قبل الكاتالوغ"
-        : "تحفظات للمراجعة، ولكن ما قدرناش ننشروها فقناتك — رد البوت أدمن فالقناة",
-    );
+    await notifyAdmin(`New submission #${subId} from ${supplier.name || tgId} (${delivery === "posted" ? "posted to channel" : "NOT posted to channel"}) — review in Submissions`);
+    await ctx.reply(intakeReply(image ? 1 : 0, caption, delivery, !!image));
   });
 
   void bot.api.setMyCommands(BOT_COMMANDS).catch((err) => {

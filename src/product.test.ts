@@ -54,6 +54,30 @@ test("publish requires images, category, price, moq and a contact method", () =>
   expect(parse(complete({ contact_type: "none" })).ok).toBe(false);
 });
 
+test("price tiers validate ranges and prices", () => {
+  const tiers = (t: unknown) => parse(complete({ price_tiers: t }));
+  expect(tiers([
+    { min_qty: 500, max_qty: 1999, price: "64.41" },
+    { min_qty: 2000, max_qty: 9999, price: "63.34" },
+    { min_qty: 10000, max_qty: null, price: "62.27" },
+  ]).ok).toBe(true);
+  // overlapping
+  expect(tiers([
+    { min_qty: 1, max_qty: 100, price: "10" },
+    { min_qty: 50, max_qty: null, price: "9" },
+  ]).ok).toBe(false);
+  // max below min
+  expect(tiers([{ min_qty: 10, max_qty: 5, price: "9" }]).ok).toBe(false);
+  // price without a number
+  expect(tiers([{ min_qty: 10, max_qty: null, price: "ask us" }]).ok).toBe(false);
+  // open-ended tier must be last
+  expect(tiers([
+    { min_qty: 1, max_qty: null, price: "10" },
+    { min_qty: 100, max_qty: null, price: "9" },
+  ]).ok).toBe(false);
+  // incompatible with price on request
+  expect(parse(complete({ price: "", price_on_request: true, price_tiers: [{ min_qty: 1, max_qty: null, price: "9" }] })).ok).toBe(false);
+});
 test("price_on_request replaces the price on publish", () => {
   const result = parse(complete({ price: "", price_on_request: true }));
   expect(result.ok).toBe(true);

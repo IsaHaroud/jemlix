@@ -1,5 +1,6 @@
-import { displayName, escapeHtml, mediaUrl, priceLabel, safeHttpUrl, thumbUrl } from "./format.js";
+import { displayName, escapeHtml, mediaUrl, priceLabel, priceNumbers, safeHttpUrl, thumbUrl, tierRangeLabel } from "./format.js";
 import { catLabel, countLabel, initLang, moqLabel, t } from "./i18n.js";
+import { initOwnerContact } from "./owner-contact.js";
 
 const search = document.getElementById("search");
 const catsEl = document.getElementById("cats");
@@ -13,6 +14,11 @@ let products = [];
 let cats = [];
 let channels = [];
 let activeCat = "";
+let sortMode = "newest";
+
+const sortSel = document.getElementById("sort");
+const minPriceEl = document.getElementById("min-price");
+const maxPriceEl = document.getElementById("max-price");
 
 function syncCatalogMeta() {
   if (storeSlug()) return;
@@ -44,17 +50,74 @@ function contactOf(product) {
 
 function visible() {
   const q = search.value.trim().toLowerCase();
-  return products.filter((product) => {
+  const min = minPriceEl.value === "" ? null : Number(minPriceEl.value);
+  const max = maxPriceEl.value === "" ? null : Number(maxPriceEl.value);
+  const priceFiltered = min !== null || max !== null;
+  const list = products.filter((product) => {
     if (activeCat && product.category !== activeCat) return false;
-    if (!q) return true;
-    return `${product.name || ""} ${product.description || ""}`.toLowerCase().includes(q);
+    if (q && !`${product.name || ""} ${product.description || ""}`.toLowerCase().includes(q)) return false;
+    if (priceFiltered) {
+      const nums = priceNumbers(product);
+      if (!nums.length) return false;
+      if (min !== null && !nums.some((n) => n >= min)) return false;
+      if (max !== null && !nums.some((n) => n <= max)) return false;
+    }
+    return true;
   });
+  const byIdDesc = (a, b) => (b.id || 0) - (a.id || 0);
+  const byDate = (a, b) =>
+    String(b.created_at || "").localeCompare(String(a.created_at || "")) || byIdDesc(a, b);
+  switch (sortMode) {
+    case "oldest":
+      list.sort((a, b) => byDate(b, a));
+      break;
+    case "price-asc":
+      list.sort((a, b) => {
+        const pa = priceNum(a);
+        const pb = priceNum(b);
+        if (pa === null && pb === null) return byIdDesc(a, b);
+        if (pa === null) return 1;
+        if (pb === null) return -1;
+        return pa - pb || byIdDesc(a, b);
+      });
+      break;
+    case "price-desc":
+      list.sort((a, b) => {
+        const pa = priceNum(a);
+        const pb = priceNum(b);
+        if (pa === null && pb === null) return byIdDesc(a, b);
+        if (pa === null) return 1;
+        if (pb === null) return -1;
+        return pb - pa || byIdDesc(a, b);
+      });
+      break;
+    case "name":
+      list.sort((a, b) =>
+        String(displayName(a.name)).localeCompare(String(displayName(b.name)), undefined, { sensitivity: "base" }) ||
+        byIdDesc(a, b),
+      );
+      break;
+    case "newest":
+    default:
+      list.sort(byDate);
+      break;
+  }
+  return list;
+}
+
+// Lowest unit price on a product (base or any tier) or null.
+function priceNum(product) {
+  const nums = priceNumbers(product);
+  return nums.length ? Math.min(...nums) : null;
 }
 
 // ---- templates ----
 function cardHtml(product) {
   const file = product.images?.[0];
-  const price = priceLabel(product.price, t("currency"), product.price_on_request ? t("priceOnRequest") : "");
+  const tiers = Array.isArray(product.price_tiers) ? product.price_tiers : [];
+  const price = tiers.length
+    ? tierRangeLabel(tiers, t("currency"))
+    : priceLabel(product.price, t("currency"), product.price_on_request ? t("priceOnRequest") : "");
   const contact = contactOf(product);
   const alt = escapeHtml(displayName(product.name));
   return `
@@ -171,8 +234,51 @@ function chooseCategory(value) {
   if (categoriesDialog.open) categoriesDialog.close();
 }
 
+const SORT_MODES = ["newest", "oldest", "price-asc", "price-desc", "name"];
+
+function sortLabel(mode) {
+  return t(
+    mode === "oldest" ? "sortOldest"
+      : mode === "price-asc" ? "sortPriceAsc"
+        : mode === "price-desc" ? "sortPriceDesc"
+          : mode === "name" ? "sortName"
+            : "sortNewest",
+  );
+}
+
+function renderToolbar() {
+  const current = SORT_MODES.includes(sortMode) ? sortMode : "newest";
+  sortMode = current;
+  sortSel.setAttribute("aria-label", t("sort"));
+  sortSel.replaceChildren(
+    ...SORT_MODES.map((mode) => {
+      const opt = document.createElement("option");
+      opt.value = mode;
+      opt.textContent = sortLabel(mode);
+      if (mode === current) opt.selected = true;
+      return opt;
+    }),
+  );
+}
+
+function resetFilters() {
+  search.value = "";
+  minPriceEl.value = "";
+  maxPriceEl.value = "";
+  sortMode = "newest";
+  renderToolbar();
+  chooseCategory("");
+}
+
 // ---- events ----
 search.addEventListener("input", renderCards);
+sortSel.addEventListener("change", () => {
+  sortMode = sortSel.value;
+  renderCards();
+});
+minPriceEl.addEventListener("input", renderCards);
+maxPriceEl.addEventListener("input", renderCards);
+document.getElementById("reset-filters").addEventListener("click", resetFilters);
 
 // card navigation (inner links like the store link keep their own target)
 grid.addEventListener("click", (event) => {
@@ -218,6 +324,7 @@ grid.addEventListener(
 document.addEventListener("jemla:lang", () => {
   syncCatalogMeta();
   renderCats(cats);
+  renderToolbar();
   renderCards();
   renderStores();
   updateStoreSub();
@@ -273,4 +380,6 @@ async function load() {
 
 initLang();
 syncCatalogMeta();
+renderToolbar();
+initOwnerContact();
 load();

@@ -1,5 +1,6 @@
-import { displayName, escapeHtml, mediaUrl, priceLabel, safeHttpUrl, thumbUrl } from "./format.js";
+import { displayName, escapeHtml, mediaUrl, priceLabel, tierQtyLabel, tierRangeLabel, safeHttpUrl, thumbUrl } from "./format.js";
 import { initLang, t } from "./i18n.js";
+import { initOwnerContact } from "./owner-contact.js";
 
 const $ = (id) => document.getElementById(id);
 const main = $("g-main");
@@ -76,6 +77,17 @@ function renderSpecs() {
   $("g-specs-table").innerHTML = specs.map(specHtml).join("");
 }
 
+function renderTiers() {
+  const tiers = Array.isArray(product?.price_tiers) ? product.price_tiers : [];
+  const section = $("g-tiers");
+  if (!section) return;
+  section.hidden = tiers.length === 0;
+  if (!tiers.length) return;
+  $("g-tiers-table").innerHTML = tiers
+    .map((tier) => `<tr><td>${escapeHtml(tierQtyLabel(tier))}</td><td>${escapeHtml(priceLabel(tier.price, t("currency")))}</td></tr>`)
+    .join("");
+}
+
 function render() {
   if (!product) {
     $("notfound").hidden = false;
@@ -88,7 +100,10 @@ function render() {
   const crumb = $("crumb-name");
   if (crumb) crumb.textContent = title;
   renderChannel();
-  const price = priceLabel(product.price, t("currency"), product.price_on_request ? t("priceOnRequest") : "");
+  const tiers = Array.isArray(product.price_tiers) ? product.price_tiers : [];
+  const price = tiers.length
+    ? tierRangeLabel(tiers, t("currency"))
+    : priceLabel(product.price, t("currency"), product.price_on_request ? t("priceOnRequest") : "");
   $("g-price").textContent = price;
   $("g-price").hidden = !price;
   $("g-moq").textContent = product.moq || "";
@@ -125,6 +140,7 @@ function render() {
   index = 0;
   showPhoto();
   renderThumbs();
+  renderTiers();
   renderSpecs();
 }
 
@@ -170,4 +186,5 @@ async function load() {
 
 initLang();
 document.addEventListener("jemla:lang", () => render());
+initOwnerContact();
 load();

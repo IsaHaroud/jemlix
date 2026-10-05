@@ -1,4 +1,4 @@
-import { displayName, priceLabel, thumbUrl, mediaUrl } from "./format.js";
+import { displayName, priceLabel, thumbUrl, mediaUrl, tierRangeLabel } from "./format.js";
 import { getLang, initLang } from "./i18n.js";
 
 const COPY = {
@@ -11,6 +11,8 @@ const COPY = {
     hiddenProducts: "المنتجات المخفية", previous: "السابق", next: "التالي", editProduct: "تعديل المنتج",
     price: "السعر (درهم)", priceOnRequest: "السعر عند الطلب", stock: "المخزون", stockPlaceholder: "متوفر / 100 قطعة",
     minimum: "الحد الأدنى للطلب", description: "الوصف", visibleInCatalog: "ظاهر في الدليل", cancel: "إلغاء",
+    tiers: "أسعار الكمية", addTier: "إضافة شريحة", tierFrom: "من (قطعة)", tierTo: "إلى (فارغ = ∞)",
+    tierPrice: "سعر الوحدة", tiered: "أسعار كمية",
     save: "حفظ التغييرات", supplier: "المورّد", noPrice: "دون سعر", minimumShort: "الحد الأدنى",
     noMinimum: "دون حد أدنى", noStock: "المخزون غير محدد", visible: "ظاهر", hidden: "مخفي", edit: "تعديل",
     noProducts: "لم نعثر على أي منتج", noProductsHelp: "غيّر البحث أو عامل التصفية ثم حاول مرة أخرى.",
@@ -26,6 +28,8 @@ const COPY = {
     hiddenProducts: "Produits masqués", previous: "Précédent", next: "Suivant", editProduct: "Modifier le produit",
     price: "Prix (MAD)", priceOnRequest: "Prix sur demande", stock: "Stock", stockPlaceholder: "Disponible / 100 pièces",
     minimum: "Minimum de commande", description: "Description", visibleInCatalog: "Visible dans le catalogue", cancel: "Annuler",
+    tiers: "Prix dégressifs", addTier: "Ajouter une tranche", tierFrom: "De (pièces)", tierTo: "À (vide = ∞)",
+    tierPrice: "Prix unitaire", tiered: "prix dégressifs",
     save: "Enregistrer", supplier: "Fournisseur", noPrice: "Sans prix", minimumShort: "Minimum",
     noMinimum: "Sans minimum", noStock: "Stock non défini", visible: "Visible", hidden: "Masqué", edit: "Modifier",
     noProducts: "Aucun produit trouvé", noProductsHelp: "Modifiez la recherche ou le filtre, puis réessayez.",
@@ -52,6 +56,7 @@ const PAGE_SIZE = 25;
 let supplier = null;
 let products = [];
 let current = null;
+let editTiers = [];
 let offset = 0;
 let total = 0;
 let searchTimer = 0;
@@ -129,8 +134,12 @@ function productRow(product) {
   title.dir = "auto";
   const meta = document.createElement("p");
   meta.className = "muted";
-  const price = priceLabel(product.price, getLang() === "fr" ? "MAD" : "د.م", product.price_on_request ? sp("priceOnRequest") : "");
-  meta.textContent = [price || sp("noPrice"), product.moq ? `${sp("minimumShort")} ${product.moq}` : sp("noMinimum"), product.stock || sp("noStock")].join(" · ");
+  const cur = getLang() === "fr" ? "MAD" : "د.م";
+  const tiers = Array.isArray(product.price_tiers) ? product.price_tiers : [];
+  const price = tiers.length
+    ? tierRangeLabel(tiers, cur)
+    : priceLabel(product.price, cur, product.price_on_request ? sp("priceOnRequest") : "");
+  meta.textContent = [price || sp("noPrice"), tiers.length ? sp("tiered") : null, product.moq ? `${sp("minimumShort")} ${product.moq}` : sp("noMinimum"), product.stock || sp("noStock")].filter(Boolean).join(" · ");
   const status = document.createElement("span");
   status.className = `supplier-status ${product.published ? "active" : "hidden"}`;
   status.textContent = product.published ? sp("visible") : sp("hidden");
@@ -194,6 +203,8 @@ async function loadProducts(reset = false) {
 
 function openEditor(product) {
   current = product;
+  editTiers = (product.price_tiers || []).map((tr) => ({ min_qty: tr.min_qty ?? "", max_qty: tr.max_qty ?? "", price: tr.price || "" }));
+  renderEditTiers();
   $("supplier-edit-name").textContent = displayName(product.name);
   $("supplier-edit-name").dir = "auto";
   $("supplier-edit-price").value = product.price || "";
@@ -208,7 +219,43 @@ function openEditor(product) {
 
 function closeEditor() {
   current = null;
+  editTiers = [];
   $("supplier-editor").close();
+}
+
+function renderEditTiers() {
+  const box = $("supplier-edit-tiers");
+  box.replaceChildren();
+  editTiers.forEach((tier, i) => {
+    const row = document.createElement("div");
+    row.className = "tier-row";
+    const min = document.createElement("input");
+    min.type = "number";
+    min.min = "1";
+    min.placeholder = sp("tierFrom");
+    min.setAttribute("aria-label", sp("tierFrom"));
+    min.value = tier.min_qty;
+    min.addEventListener("input", () => { tier.min_qty = min.value; });
+    const max = document.createElement("input");
+    max.type = "number";
+    max.min = "1";
+    max.placeholder = sp("tierTo");
+    max.setAttribute("aria-label", sp("tierTo"));
+    max.value = tier.max_qty ?? "";
+    max.addEventListener("input", () => { tier.max_qty = max.value === "" ? null : max.value; });
+    const price = document.createElement("input");
+    price.placeholder = sp("tierPrice");
+    price.setAttribute("aria-label", sp("tierPrice"));
+    price.value = tier.price;
+    price.addEventListener("input", () => { tier.price = price.value; });
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "danger";
+    del.textContent = "✕";
+    del.addEventListener("click", () => { editTiers.splice(i, 1); renderEditTiers(); });
+    row.append(min, max, price, del);
+    box.append(row);
+  });
 }
 
 $("supplier-login-form").addEventListener("submit", async (event) => {
@@ -260,6 +307,10 @@ $("supplier-next").addEventListener("click", () => {
 
 $("supplier-edit-close").addEventListener("click", closeEditor);
 $("supplier-edit-cancel").addEventListener("click", closeEditor);
+$("supplier-edit-add-tier").addEventListener("click", () => {
+  editTiers.push({ min_qty: "", max_qty: null, price: "" });
+  renderEditTiers();
+});
 $("supplier-editor").addEventListener("click", (event) => {
   if (event.target === $("supplier-editor")) closeEditor();
 });
@@ -277,6 +328,7 @@ $("supplier-edit-form").addEventListener("submit", async (event) => {
       body: JSON.stringify({
         price: $("supplier-edit-price").value.trim(),
         price_on_request: $("supplier-edit-por").checked,
+        price_tiers: editTiers,
         stock: $("supplier-edit-stock").value.trim(),
         moq: $("supplier-edit-moq").value.trim(),
         description: $("supplier-edit-desc").value.trim(),
@@ -311,6 +363,7 @@ document.addEventListener("jemla:lang", () => {
   translateSupplierPage();
   if (supplier) showApp();
   if (lastData) renderProducts(lastData);
+  if (current) renderEditTiers();
 });
 
 initLang();

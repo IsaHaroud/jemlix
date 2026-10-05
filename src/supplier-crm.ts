@@ -3,6 +3,7 @@ import db from "./db.ts";
 export const BILLING_CYCLES = new Set(["monthly", "quarterly", "yearly", "custom"]);
 export const BILLING_STATUSES = new Set(["trial", "active", "paused", "churned"]);
 export const PAYMENT_METHODS = new Set(["cash", "bank", "wafacash", "cmi", "other"]);
+export const PAYMENT_KINDS = new Set(["subscription", "onboarding"]);
 
 function cleanText(value: unknown, max: number): string | null {
   if (value == null) return "";
@@ -34,7 +35,7 @@ export type SubscriptionInput = {
 };
 
 export function parseSubscription(input: unknown): { ok: true; value: SubscriptionInput } | { ok: false; error: string } {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "JSON غير صالح" };
+  if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "Invalid JSON" };
   const body = input as Record<string, unknown>;
   const plan_name = cleanText(body.plan_name, 80);
   const internal_note = cleanText(body.internal_note, 4000);
@@ -48,13 +49,13 @@ export function parseSubscription(input: unknown): { ok: true; value: Subscripti
   const next_due_at = dateValue(body.next_due_at);
   const trial_ends_at = dateValue(body.trial_ends_at);
   const next_follow_up_at = dateValue(body.next_follow_up_at);
-  if (plan_name == null || internal_note == null || !currency || currency.length !== 3) return { ok: false, error: "حقل نصي غير صالح" };
-  if (!billing_cycle || !BILLING_CYCLES.has(billing_cycle)) return { ok: false, error: "دورة الفوترة غير صالحة" };
-  if (!status || !BILLING_STATUSES.has(status)) return { ok: false, error: "حالة الفوترة غير صالحة" };
-  if (!Number.isInteger(amount_minor) || amount_minor < 0 || amount_minor > 100_000_000) return { ok: false, error: "المبلغ غير صالح" };
-  if (!Number.isInteger(grace_days) || grace_days < 0 || grace_days > 90) return { ok: false, error: "مدة السماح غير صالحة" };
-  if ([period_start, period_end, next_due_at, trial_ends_at, next_follow_up_at].includes(false)) return { ok: false, error: "التاريخ غير صالح" };
-  if (period_start && period_end && period_end < period_start) return { ok: false, error: "نهاية الفترة قبل البداية" };
+  if (plan_name == null || internal_note == null || !currency || currency.length !== 3) return { ok: false, error: "Invalid text field" };
+  if (!billing_cycle || !BILLING_CYCLES.has(billing_cycle)) return { ok: false, error: "Invalid billing cycle" };
+  if (!status || !BILLING_STATUSES.has(status)) return { ok: false, error: "Invalid billing status" };
+  if (!Number.isInteger(amount_minor) || amount_minor < 0 || amount_minor > 100_000_000) return { ok: false, error: "Invalid amount" };
+  if (!Number.isInteger(grace_days) || grace_days < 0 || grace_days > 90) return { ok: false, error: "Invalid grace period" };
+  if ([period_start, period_end, next_due_at, trial_ends_at, next_follow_up_at].includes(false)) return { ok: false, error: "Invalid date" };
+  if (period_start && period_end && period_end < period_start) return { ok: false, error: "Period end is before period start" };
   return { ok: true, value: { plan_name, amount_minor, currency, billing_cycle, period_start: period_start || null, period_end: period_end || null, next_due_at: next_due_at || null, grace_days, status, trial_ends_at: trial_ends_at || null, next_follow_up_at: next_follow_up_at || null, internal_note } };
 }
 
@@ -63,6 +64,7 @@ export type PaymentInput = {
   currency: string;
   paid_at: string;
   method: string;
+  kind: string;
   external_reference: string;
   note: string;
   period_start: string | null;
@@ -71,22 +73,23 @@ export type PaymentInput = {
 };
 
 export function parsePayment(input: unknown): { ok: true; value: PaymentInput } | { ok: false; error: string } {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "JSON غير صالح" };
+  if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "Invalid JSON" };
   const body = input as Record<string, unknown>;
   const amount_minor = Number(body.amount_minor);
   const currency = cleanText(body.currency ?? "MAD", 3)?.toUpperCase() ?? null;
   const method = cleanText(body.method, 20);
+  const kind = cleanText(body.kind ?? "subscription", 20);
   const external_reference = cleanText(body.external_reference, 120);
   const note = cleanText(body.note, 1000);
   const paid_at = dateValue(body.paid_at);
   const period_start = dateValue(body.period_start);
   const period_end = dateValue(body.period_end);
   const next_due_at = dateValue(body.next_due_at);
-  if (!Number.isInteger(amount_minor) || amount_minor <= 0 || amount_minor > 100_000_000) return { ok: false, error: "المبلغ غير صالح" };
-  if (!currency || currency.length !== 3 || !method || !PAYMENT_METHODS.has(method) || external_reference == null || note == null) return { ok: false, error: "بيانات الأداء غير صالحة" };
-  if (!paid_at || paid_at === false || period_start === false || period_end === false || next_due_at === false) return { ok: false, error: "التاريخ غير صالح" };
-  if (period_start && period_end && period_end < period_start) return { ok: false, error: "نهاية الفترة قبل البداية" };
-  return { ok: true, value: { amount_minor, currency, paid_at, method, external_reference, note, period_start: period_start || null, period_end: period_end || null, next_due_at: next_due_at || null } };
+  if (!Number.isInteger(amount_minor) || amount_minor <= 0 || amount_minor > 100_000_000) return { ok: false, error: "Invalid amount" };
+  if (!currency || currency.length !== 3 || !method || !PAYMENT_METHODS.has(method) || !kind || !PAYMENT_KINDS.has(kind) || external_reference == null || note == null) return { ok: false, error: "Invalid payment data" };
+  if (!paid_at || paid_at === false || period_start === false || period_end === false || next_due_at === false) return { ok: false, error: "Invalid date" };
+  if (period_start && period_end && period_end < period_start) return { ok: false, error: "Period end is before period start" };
+  return { ok: true, value: { amount_minor, currency, paid_at, method, kind, external_reference, note, period_start: period_start || null, period_end: period_end || null, next_due_at: next_due_at || null } };
 }
 
 function utcDay(value: string): number {

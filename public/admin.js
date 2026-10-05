@@ -1,6 +1,122 @@
 import { displayName, isSubstantialName, mediaUrl, priceLabel, suggestedName, thumbUrl } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
+
+// ---------- helpers ----------
+async function j(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) {
+    location.href = "/login";
+    throw new Error("auth");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+function toast(msg, isErr = false) {
+  const d = document.createElement("div");
+  d.className = "toast" + (isErr ? " err" : "");
+  d.textContent = msg;
+  $("toasts").append(d);
+  setTimeout(() => d.remove(), 3200);
+}
+
+function fmtMAD(minor) {
+  if (minor == null) return "—";
+  return `${Number(minor / 100).toLocaleString("en-US").replace(/\.00$/, "")} MAD`;
+}
+
+function fmtDate(v) {
+  return (v || "").slice(0, 10) || "—";
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function phaseBadge(phase) {
+  const map = {
+    active: ["b-green", "Active"], trial: ["b-blue", "Trial"],
+    trial_ending: ["b-yellow", "Trial ending"], trial_ended: ["b-red", "Trial ended"],
+    due_soon: ["b-yellow", "Due soon"], due_today: ["b-yellow", "Due today"],
+    grace: ["b-yellow", "Grace"], overdue: ["b-red", "Overdue"],
+    paused: ["b-gray", "Paused"], churned: ["b-gray", "Churned"],
+    unconfigured: ["b-gray", "No plan"],
+  };
+  const [cls, label] = map[phase] || ["b-gray", phase || "—"];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+function supplierStatusBadge(status) {
+  const map = { active: ["b-green", "Active"], pending: ["b-yellow", "Pending"], paused: ["b-red", "Paused"] };
+  const [cls, label] = map[status] || ["b-gray", status || "—"];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+function dueText(s) {
+  if (s.phase === "trial" || s.phase === "trial_ending" || s.phase === "trial_ended") {
+    return `trial ends ${fmtDate(s.trial_ends_at)}`;
+  }
+  if (s.next_due_at) return `due ${fmtDate(s.next_due_at)}`;
+  return "no due date";
+}
+
+function fallBack(img) {
+  img.addEventListener("error", () => {
+    const full = img.dataset.full;
+    if (full && img.getAttribute("src") !== full) img.src = full;
+  });
+}
+
+function thumb(file) {
+  const img = document.createElement("img");
+  img.alt = "";
+  img.loading = "lazy";
+  img.src = thumbUrl(file);
+  img.dataset.full = mediaUrl(file);
+  fallBack(img);
+  return img;
+}
+
+// ---------- modal + drawer ----------
+function openModal(title, html) {
+  $("modal-title").textContent = title;
+  $("modal-body").innerHTML = html;
+  $("modal-wrap").hidden = false;
+}
+function closeModal() {
+  $("modal-wrap").hidden = true;
+}
+
+function openDrawer(title, statusHtml) {
+  $("drawer-title").textContent = title;
+  $("drawer-status").innerHTML = statusHtml || "";
+  $("drawer-body").innerHTML = "Loading…";
+  $("drawer-wrap").hidden = false;
+}
+function closeDrawer() {
+  $("drawer-wrap").hidden = true;
+}
+
+// ---------- nav ----------
+const PAGES = ["overview", "queue", "products", "subs", "suppliers", "payments"];
+const PAGE_TITLES = { overview: "Overview", queue: "Review queue", products: "Products", subs: "Submissions", suppliers: "Suppliers", payments: "Payments" };
+
+function go(page) {
+  for (const p of PAGES) {
+    const sec = $(`page-${p}`);
+    if (sec) sec.hidden = p !== page;
+  }
+  for (const btn of document.querySelectorAll("[data-page]")) {
+    const on = btn.dataset.page === page;
+    btn.classList.toggle("active", on);
+    if (btn.classList.contains("chip")) btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  $("page-title").textContent = PAGE_TITLES[page] || page;
+}
+
+// ---------- shared state ----------
 const supplierEl = $("supplier");
 const statusEl = $("status");
 const channelEl = $("channel");
@@ -27,54 +143,48 @@ let selImages = [];
 let contactType = "whatsapp";
 let contactVal = "";
 let specs = [];
+let tiers = [];
 let imgOffset = 0;
 let imgTotal = 0;
 let imgQuery = "";
 let imgTimer = 0;
 let queryTimer = 0;
 let saving = false;
-
-async function j(url, opts) {
-  const res = await fetch(url, opts);
-  if (res.status === 401) {
-    location.href = "/login";
-    throw new Error("auth");
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "خطأ");
-  return data;
-}
+let suppliers = [];
+let subs = [];
+let subsOffset = 0;
+let subsTotal = 0;
+let pendingSubmissionIds = [];
+let pendingSupplierId = null;
+let editingId = null;
+let lastPublished = [];
+let statsCache = null;
 
 function setNote(text) {
   noteEl.hidden = !text;
   noteEl.textContent = text || "";
 }
 
+function resetEditorState() {
+  selected.clear();
+  pendingSubmissionIds = [];
+  pendingSupplierId = null;
+  editingId = null;
+  tiers = [];
+  renderTiers();
+  $("edit-badge").hidden = true;
+  $("publish").textContent = "Publish";
+}
+
 function renderCounts() {
-  countsEl.textContent = `جديد ${counts.new} · منشور ${publishedCount}`;
+  countsEl.textContent = `New ${counts.new} · Published ${publishedCount}`;
 }
 
 function renderSelection() {
-  selCount.textContent = `${selected.size} محدد`;
+  selCount.textContent = `${selected.size} selected`;
 }
 
-function fallBack(img) {
-  img.addEventListener("error", () => {
-    const full = img.dataset.full;
-    if (full && img.getAttribute("src") !== full) img.src = full;
-  });
-}
-
-function thumb(file) {
-  const img = document.createElement("img");
-  img.alt = "";
-  img.loading = "lazy";
-  img.src = thumbUrl(file);
-  img.dataset.full = mediaUrl(file);
-  fallBack(img);
-  return img;
-}
-
+// ---------- queue ----------
 function renderQueue() {
   queueEl.replaceChildren();
   for (const post of loaded) {
@@ -93,10 +203,10 @@ function renderQueue() {
     const line = document.createElement("span");
     line.className = "q-text";
     const raw = (post.text || "").trim();
-    line.textContent = raw ? raw.slice(0, 90) : "(بلا نص)";
+    line.textContent = raw ? raw.slice(0, 90) : "(no text)";
     const meta = document.createElement("span");
     meta.className = "q-meta";
-    const state = post.status === "done" ? "منشور" : post.status === "skipped" ? "متخطى" : "";
+    const state = post.status === "done" ? "published" : post.status === "skipped" ? "skipped" : "";
     meta.textContent = [post.date?.slice(0, 10) || "", state].filter(Boolean).join(" · ");
     text.append(line, meta);
 
@@ -114,7 +224,7 @@ function renderQueue() {
     queueEl.append(button);
   }
   moreEl.hidden = loaded.length >= total;
-  moreEl.textContent = `عرض المزيد (${Math.max(total - loaded.length, 0)} باقي)`;
+  moreEl.textContent = `Show more (${Math.max(total - loaded.length, 0)} left)`;
 }
 
 function toggle(post) {
@@ -133,7 +243,7 @@ async function loadPosts(reset) {
     total = 0;
     renderQueue();
     renderSelection();
-    setNote("اختار المورّد باش تشوف البوسطات ديالو");
+    setNote("Select a supplier to see their posts");
     return;
   }
   setNote("");
@@ -158,7 +268,7 @@ async function loadPosts(reset) {
 async function loadChannels() {
   const channels = await j("/api/channels");
   const current = channelEl.value;
-  channelEl.replaceChildren(new Option("كل القنوات", ""));
+  channelEl.replaceChildren(new Option("All channels", ""));
   for (const ch of channels) channelEl.append(new Option(ch.name, ch.name));
   channelEl.value = channels.some((ch) => ch.name === current) ? current : "";
   renderChannels(channels);
@@ -179,11 +289,11 @@ function renderChannels(list) {
     const input = document.createElement("input");
     input.value = ch.slug;
     input.placeholder = "slug";
-    input.setAttribute("aria-label", `سيلغ ${ch.name}`);
+    input.setAttribute("aria-label", `Slug for ${ch.name}`);
     const save = document.createElement("button");
     save.type = "button";
     save.className = "ghost";
-    save.textContent = "حفظ";
+    save.textContent = "Save";
     save.addEventListener("click", () => saveSlug(ch.name, input));
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -193,7 +303,7 @@ function renderChannels(list) {
     });
     const count = document.createElement("span");
     count.className = "muted";
-    count.textContent = `${ch.count} منتج`;
+    count.textContent = `${ch.count} products`;
     const link = document.createElement("a");
     link.className = "text-link";
     link.href = `/c/${encodeURIComponent(ch.slug)}`;
@@ -215,12 +325,14 @@ async function saveSlug(name, input) {
     });
     await loadChannels();
     setNote("");
+    toast("Slug saved");
   } catch (err) {
     if (err.message === "auth") return;
-    setNote(err.message || "تعذر حفظ السيلغ");
+    setNote(err.message || "Could not save slug");
   }
 }
 
+// ---------- products ----------
 function renderPublished(list) {
   lastPublished = list;
   publishedCount = list.filter((p) => p.published).length;
@@ -229,7 +341,7 @@ function renderPublished(list) {
   if (!list.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = "مازال ما نشرتي والو";
+    empty.textContent = "Nothing published yet";
     publishedEl.append(empty);
     return;
   }
@@ -252,20 +364,22 @@ function renderPublished(list) {
     title.textContent = displayName(product.name);
     const meta = document.createElement("div");
     meta.className = "muted";
-    const bits = [product.category, priceLabel(product.price, "د.م", product.price_on_request ? "الثمن عند الطلب" : ""), product.source_channel].filter(Boolean);
-    if (!isSubstantialName(product.name)) bits.push("الاسم غير كافٍ");
-    if (!product.published) bits.push("مسودة");
+    const tierCount = Array.isArray(product.price_tiers) ? product.price_tiers.length : 0;
+    const bits = [product.category, priceLabel(product.price, "MAD", product.price_on_request ? "Price on request" : ""), product.source_channel].filter(Boolean);
+    if (tierCount) bits.push(`${tierCount} price tiers`);
+    if (!isSubstantialName(product.name)) bits.push("weak name");
+    if (!product.published) bits.push("draft");
     meta.textContent = bits.join(" · ");
     copy.append(title, meta);
     const edit = document.createElement("button");
     edit.type = "button";
     edit.className = "ghost";
-    edit.textContent = "تعديل";
+    edit.textContent = "Edit";
     edit.addEventListener("click", () => editProduct(product.id));
     const del = document.createElement("button");
     del.type = "button";
     del.className = "danger";
-    del.textContent = "حذف";
+    del.textContent = "Delete";
     del.addEventListener("click", () => removeProduct(product.id, del));
     row.append(copy, edit, del);
     publishedEl.append(row);
@@ -277,20 +391,58 @@ async function loadPublished() {
     supplier_id: $("pub-supplier").value,
     q: $("pub-q").value.trim(),
   });
-  const list = await j(`/api/admin/products?${params}`);
-  renderPublished(list);
+  renderPublished(await j(`/api/admin/products?${params}`));
 }
 
 async function removeProduct(id, button) {
   if (button.dataset.confirm !== "1") {
     button.dataset.confirm = "1";
-    button.textContent = "تأكيد الحذف";
+    button.textContent = "Confirm delete";
     return;
   }
   await j(`/api/products/${id}`, { method: "DELETE" });
+  toast("Product deleted");
   await Promise.all([loadPublished(), loadPosts(true)]);
 }
 
+function editProduct(id) {
+  const product = lastPublished.find((p) => p.id === id);
+  if (!product) return;
+  resetEditorState();
+  setNote("");
+  editingId = id;
+  pendingSupplierId = product.supplier_id ?? null;
+  selImages = [...(product.images || [])];
+  emptyEl.hidden = true;
+  editor.hidden = false;
+  const badge = $("edit-badge");
+  badge.hidden = false;
+  badge.textContent = `Editing product #${id}${product.published ? "" : " (draft)"}`;
+  $("publish").textContent = product.published ? "Save" : "Publish";
+  $("post-text").textContent = product.description || "(no description)";
+  $("post-phone").hidden = true;
+  $("f-name").value = product.name || "";
+  $("f-category").value = product.category || "";
+  $("f-price").value = product.price || "";
+  $("f-por").checked = !!product.price_on_request;
+  $("f-stock").value = product.stock || "";
+  $("f-moq").value = product.moq || "";
+  $("f-desc").value = product.description || "";
+  specs = (product.specs || []).map((s) => ({ k: s.k || "", v: s.v || "" }));
+  renderSpecs();
+  tiers = (product.price_tiers || []).map((tr) => ({ min_qty: tr.min_qty ?? "", max_qty: tr.max_qty ?? "", price: tr.price || "" }));
+  renderTiers();
+  $("source").textContent = product.source_channel || "";
+  formError.hidden = true;
+  $("picker").hidden = true;
+  renderSelImages();
+  renderContact([], product.contact_type ? { type: product.contact_type, value: product.contact || "" } : undefined);
+  go("queue");
+  editor.scrollIntoView({ behavior: "smooth", block: "start" });
+  $("f-name").focus();
+}
+
+// ---------- editor images / specs / contact ----------
 function renderSelImages() {
   const box = $("sel-images");
   $("img-count").textContent = String(selImages.length);
@@ -299,7 +451,7 @@ function renderSelImages() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "sel-img";
-    button.title = "حيد الصورة";
+    button.title = "Remove image";
     button.append(thumb(file));
     button.addEventListener("click", () => {
       selImages = selImages.filter((item) => item !== file);
@@ -345,24 +497,24 @@ function renderContact(phones, preselect) {
   const box = $("contact-options");
   box.replaceChildren();
   const extra = preselect?.value &&
-    !["", cfg.defaultWhatsapp, phones[0] || "", cfg.defaultChannel].includes(preselect.value)
-    ? [{ type: preselect.type, label: `المحفوظ ${preselect.value}`, value: preselect.value, disabled: false }]
+    ![cfg.defaultWhatsapp, phones[0] || "", cfg.defaultChannel, ""].includes(preselect.value)
+    ? [{ type: preselect.type, label: `Saved ${preselect.value}`, value: preselect.value, disabled: false }]
     : [];
   const options = [
     {
       type: "whatsapp",
-      label: cfg.defaultWhatsapp ? `واتساب الافتراضي ${cfg.defaultWhatsapp}` : "واتساب الافتراضي",
+      label: cfg.defaultWhatsapp ? `Default WhatsApp ${cfg.defaultWhatsapp}` : "Default WhatsApp",
       value: cfg.defaultWhatsapp,
       disabled: !cfg.defaultWhatsapp,
     },
     {
       type: "whatsapp-msg",
-      label: phones[0] ? `واتساب فالبوسط ${phones[0]}` : "واتساب فالبوسط",
+      label: phones[0] ? `Post WhatsApp ${phones[0]}` : "Post WhatsApp",
       value: phones[0] || "",
       disabled: !phones[0],
     },
-    { type: "telegram", label: "قناة تيليغرام", value: cfg.defaultChannel, disabled: !cfg.defaultChannel },
-    { type: "none", label: "بلا تواصل", value: "", disabled: false },
+    { type: "telegram", label: "Telegram channel", value: cfg.defaultChannel, disabled: !cfg.defaultChannel },
+    { type: "none", label: "No contact", value: "", disabled: false },
     ...extra,
   ];
   const picked = preselect && options.find((o) => !o.disabled && o.type === preselect.type && o.value === preselect.value);
@@ -401,11 +553,11 @@ function renderSpecs() {
     const row = document.createElement("div");
     row.className = "spec-row";
     const key = document.createElement("input");
-    key.placeholder = "الصفة (مثلا: اللون)";
+    key.placeholder = "Attribute (e.g. Color)";
     key.value = spec.k;
     key.addEventListener("input", () => { spec.k = key.value; });
     const value = document.createElement("input");
-    value.placeholder = "القيمة (مثلا: أحمر)";
+    value.placeholder = "Value (e.g. Red)";
     value.value = spec.v;
     value.addEventListener("input", () => { spec.v = value.value; });
     const del = document.createElement("button");
@@ -418,10 +570,51 @@ function renderSpecs() {
   });
 }
 
+function addTierRow(minQty, maxQty, price) {
+  tiers.push({ min_qty: minQty ?? "", max_qty: maxQty ?? "", price: price ?? "" });
+  renderTiers();
+}
+
+function renderTiers() {
+  const box = $("tiers");
+  if (!box) return;
+  box.replaceChildren();
+  tiers.forEach((tier, i) => {
+    const row = document.createElement("div");
+    row.className = "tier-row";
+    const min = document.createElement("input");
+    min.type = "number";
+    min.min = "1";
+    min.placeholder = "From (pcs)";
+    min.setAttribute("aria-label", "From quantity");
+    min.value = tier.min_qty;
+    min.addEventListener("input", () => { tier.min_qty = min.value; });
+    const max = document.createElement("input");
+    max.type = "number";
+    max.min = "1";
+    max.placeholder = "To (empty = ∞)";
+    max.setAttribute("aria-label", "To quantity, empty means no limit");
+    max.value = tier.max_qty ?? "";
+    max.addEventListener("input", () => { tier.max_qty = max.value === "" ? null : max.value; });
+    const price = document.createElement("input");
+    price.placeholder = "Unit price";
+    price.setAttribute("aria-label", "Unit price");
+    price.value = tier.price;
+    price.addEventListener("input", () => { tier.price = price.value; });
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "danger";
+    del.textContent = "✕";
+    del.addEventListener("click", () => { tiers.splice(i, 1); renderTiers(); });
+    row.append(min, max, price, del);
+    box.append(row);
+  });
+}
+
 function buildProduct() {
   resetEditorState();
   if (!selected.size) {
-    setNote("اختار بوسط واحد على الأقل");
+    setNote("Select at least one post");
     return;
   }
   setNote("");
@@ -431,9 +624,9 @@ function buildProduct() {
   const phones = [...new Set(posts.flatMap((post) => post.phone || []))];
   emptyEl.hidden = true;
   editor.hidden = false;
-  $("post-text").textContent = text || "(بلا نص)";
+  $("post-text").textContent = text || "(no text)";
   $("post-phone").hidden = phones.length === 0;
-  $("post-phone").textContent = phones.length ? `أرقام فالبوسطات: ${phones.join("، ")}` : "";
+  $("post-phone").textContent = phones.length ? `Numbers in posts: ${phones.join(", ")}` : "";
   $("f-name").value = suggestedName(text);
   $("f-price").value = "";
   $("f-por").checked = false;
@@ -442,6 +635,8 @@ function buildProduct() {
   $("f-desc").value = "";
   specs = [];
   renderSpecs();
+  tiers = [];
+  renderTiers();
   $("source").textContent = posts[0]?.channel || "";
   formError.hidden = true;
   $("picker").hidden = true;
@@ -456,7 +651,7 @@ async function publish(event, asDraft = false) {
   const name = $("f-name").value.trim();
   if (!isSubstantialName(name)) {
     formError.hidden = false;
-    formError.textContent = "اسم المنتج غير كافٍ";
+    formError.textContent = "Product name is required";
     return;
   }
   saving = true;
@@ -465,21 +660,22 @@ async function publish(event, asDraft = false) {
   try {
     const queueSupplier = supplierEl.value && supplierEl.value !== "unlinked" ? Number(supplierEl.value) : null;
     const payload = {
-        name,
-        category: $("f-category").value,
-        price: $("f-price").value,
-        price_on_request: $("f-por").checked,
-        stock: $("f-stock").value,
-        moq: $("f-moq").value,
-        description: $("f-desc").value,
-        images: selImages,
-        contact: contactVal,
-        contact_type: contactType,
-        source_channel: $("source").textContent,
-        post_ids: [...selected.keys()],
-        specs: specs.filter((spec) => spec.k.trim() && spec.v.trim()),
-        published: asDraft ? 0 : 1,
-      };
+      name,
+      category: $("f-category").value,
+      price: $("f-price").value,
+      price_on_request: $("f-por").checked,
+      stock: $("f-stock").value,
+      moq: $("f-moq").value,
+      description: $("f-desc").value,
+      images: selImages,
+      contact: contactVal,
+      contact_type: contactType,
+      source_channel: $("source").textContent,
+      post_ids: [...selected.keys()],
+      specs: specs.filter((spec) => spec.k.trim() && spec.v.trim()),
+      price_tiers: tiers,
+      published: asDraft ? 0 : 1,
+    };
     if (pendingSupplierId) payload.supplier_id = pendingSupplierId;
     else if (queueSupplier) payload.supplier_id = queueSupplier;
     if (pendingSubmissionIds.length) payload.submission_ids = pendingSubmissionIds;
@@ -489,21 +685,23 @@ async function publish(event, asDraft = false) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      toast("Product saved");
     } else {
       await j("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      toast(asDraft ? "Draft saved" : "Product published");
     }
     resetEditorState();
     editor.hidden = true;
     emptyEl.hidden = false;
-    await Promise.all([loadPosts(true), loadPublished(), loadSubs(true), loadSuppliers()]);
+    await refreshAll();
   } catch (err) {
     if (err.message === "auth") return;
     formError.hidden = false;
-    formError.textContent = err.message || "تعذر النشر";
+    formError.textContent = err.message || "Could not publish";
   } finally {
     saving = false;
     $("publish").disabled = false;
@@ -511,47 +709,10 @@ async function publish(event, asDraft = false) {
   }
 }
 
-function editProduct(id) {
-  const product = lastPublished.find((p) => p.id === id);
-  if (!product) return;
-  resetEditorState();
-  setNote("");
-  editingId = id;
-  pendingSupplierId = product.supplier_id ?? null;
-  selImages = [...(product.images || [])];
-  emptyEl.hidden = true;
-  editor.hidden = false;
-  const badge = $("edit-badge");
-  badge.hidden = false;
-  badge.textContent = `تعديل المنتج #${id}${product.published ? "" : " (مسودة)"}`;
-  $("publish").textContent = product.published ? "حفظ" : "نشر";
-  $("post-text").textContent = product.description || "(بلا وصف)";
-  $("post-phone").hidden = true;
-  $("f-name").value = product.name || "";
-  $("f-category").value = product.category || "";
-  $("f-price").value = product.price || "";
-  $("f-por").checked = !!product.price_on_request;
-  $("f-stock").value = product.stock || "";
-  $("f-moq").value = product.moq || "";
-  $("f-desc").value = product.description || "";
-  specs = (product.specs || []).map((s) => ({ k: s.k || "", v: s.v || "" }));
-  renderSpecs();
-  $("source").textContent = product.source_channel || "";
-  formError.hidden = true;
-  $("picker").hidden = true;
-  renderSelImages();
-  renderContact([], product.contact_type ? { type: product.contact_type, value: product.contact || "" } : undefined);
-  switchTab("posts");
-  requestAnimationFrame(() => {
-    editor.scrollIntoView({ behavior: "smooth", block: "start" });
-    $("f-name").focus({ preventScroll: true });
-  });
-}
-
 async function skip() {
   const ids = [...selected.values()].filter((post) => post.status !== "done").map((post) => post.id);
   if (!ids.length) {
-    setNote("البوسط المنشور كيرجع غير إلا حذفتي المنتج");
+    setNote("Published posts only return when you delete the product");
     return;
   }
   await j("/api/posts/status", {
@@ -561,29 +722,735 @@ async function skip() {
   });
   for (const id of ids) selected.delete(id);
   setNote("");
+  toast("Skipped");
   await loadPosts(true);
 }
 
-function placePreview(event) {
-  const width = 320;
-  const height = 320;
-  let x = event.clientX + 16;
-  let y = event.clientY + 16;
-  if (x + width > window.innerWidth) x = event.clientX - width - 16;
-  if (y + height > window.innerHeight) y = Math.max(8, event.clientY - height - 16);
-  preview.style.left = `${x}px`;
-  preview.style.top = `${y}px`;
+// ---------- suppliers ----------
+function supplierById(id) {
+  return suppliers.find((s) => s.id === id);
 }
+
+function suggestSlug(name) {
+  return String(name || "").toLowerCase().trim()
+    .replace(/[^a-z0-9\s-]/g, "").replace(/[\s_]+/g, "-").replace(/-+/g, "-")
+    .replace(/^-|-$/g, "").slice(0, 60);
+}
+
+async function loadSuppliers() {
+  suppliers = await j("/api/suppliers");
+  renderSuppliers();
+  const curQ = supplierEl.value;
+  supplierEl.replaceChildren(
+    new Option("Select supplier", ""),
+    ...suppliers.map((s) => new Option(`${s.name || `#${s.id}`} · ${s.status}`, String(s.id))),
+    new Option("Unlinked (legacy)", "unlinked"),
+  );
+  if ([...supplierEl.options].some((o) => o.value === curQ)) supplierEl.value = curQ;
+  const subSel = $("sub-supplier");
+  const subCur = subSel.value;
+  subSel.replaceChildren(
+    new Option("All suppliers", ""),
+    ...suppliers.map((s) => new Option(s.name || `#${s.id}`, String(s.id))),
+  );
+  if ([...subSel.options].some((o) => o.value === subCur)) subSel.value = subCur;
+  const m = $("m-supplier");
+  m.replaceChildren(...suppliers.map((s) => new Option(s.name || `#${s.id}`, String(s.id))));
+  const pub = $("pub-supplier");
+  const pubCur = pub.value;
+  pub.replaceChildren(
+    new Option("All suppliers", ""),
+    ...suppliers.map((s) => new Option(s.name || `#${s.id}`, String(s.id))),
+    new Option("Unlinked (legacy)", "unlinked"),
+  );
+  if ([...pub.options].some((o) => o.value === pubCur)) pub.value = pubCur;
+}
+
+function renderSuppliers() {
+  const body = $("supp-rows");
+  body.replaceChildren();
+  if (!suppliers.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 7;
+    td.className = "muted";
+    td.textContent = "No suppliers yet — they appear after /start on Telegram.";
+    tr.append(td);
+    body.append(tr);
+    return;
+  }
+  for (const s of suppliers) {
+    const tr = document.createElement("tr");
+    tr.addEventListener("click", (event) => {
+      if (event.target.closest("a,button")) return;
+      openSupplier(s.id);
+    });
+    const name = document.createElement("td");
+    const strong = document.createElement("div");
+    strong.innerHTML = `<strong>${esc(s.name || `#${s.id}`)}</strong>`;
+    const sub = document.createElement("div");
+    sub.className = "muted";
+    sub.textContent = `${supplierStatusBadge(s.status).replace(/<[^>]+>/g, "")} · ${s.whatsapp || "no number"}`;
+    name.append(strong, sub);
+    const chan = document.createElement("td");
+    chan.innerHTML = `<div>${esc(s.channel_title || "—")}</div><div class="muted mono">${esc(s.channel_id || "")}</div>`;
+    const store = document.createElement("td");
+    store.innerHTML = s.channel_slug ? `<a class="text-link mono" href="/c/${encodeURIComponent(s.channel_slug)}" target="_blank" rel="noopener">/c/${esc(s.channel_slug)}</a>` : '<span class="muted">—</span>';
+    const plan = document.createElement("td");
+    plan.innerHTML = `${phaseBadge(s.phase)}<div class="muted">${esc(s.plan_name || "")}</div>`;
+    const due = document.createElement("td");
+    due.innerHTML = `<div class="mono">${esc(dueText(s))}</div>`;
+    const prods = document.createElement("td");
+    prods.textContent = s.product_count ?? 0;
+    const paid = document.createElement("td");
+    paid.textContent = fmtMAD(s.total_paid_minor ?? 0);
+    tr.append(name, chan, store, plan, due, prods, paid);
+    body.append(tr);
+  }
+}
+
+async function openSupplier(id) {
+  const detail = await j(`/api/suppliers/${id}/detail`).catch((e) => {
+    if (e.message !== "auth") toast(e.message, true);
+    return null;
+  });
+  if (!detail) return;
+  const { supplier: s, subscription: sub, payments, timeline, summary } = detail;
+  openDrawer(`#${s.id} ${s.name || ""}`, supplierStatusBadge(s.status));
+  const wa = s.whatsapp ? `<a class="mono" target="_blank" href="https://wa.me/${s.whatsapp.replace(/[^0-9]/g, "")}">${esc(s.whatsapp)}</a>` : "—";
+  const tg = s.telegram_id ? `<a class="mono" href="tg://user?id=${s.telegram_id}">${esc(String(s.telegram_id))}</a>` : "—";
+  $("drawer-body").innerHTML = `
+    <div class="panel">
+      <h3>Profile</h3>
+      <div class="fields">
+        <label class="stack">Name<input id="d-name" value="${esc(s.name || "")}"></label>
+        <label class="stack">Username<input id="d-user" value="${esc(s.username || "")}" dir="ltr"></label>
+        <label class="stack">WhatsApp<input id="d-wa" value="${esc(s.whatsapp || "")}" dir="ltr"></label>
+        <label class="stack">Telegram ID<input id="d-tg" value="${esc(s.telegram_id ?? "")}" dir="ltr"></label>
+      </div>
+      <div class="muted" style="margin-top:8px">Telegram ${tg} · WhatsApp ${wa} · since ${fmtDate(s.created_at)}</div>
+      <div class="editor-actions" style="margin-top:10px">
+        <button class="primary" id="d-save-profile" type="button">Save profile</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Channel &amp; store</h3>
+      <div class="muted">Channel (linked by the supplier via bot admin)</div>
+      <div style="font-weight:600">${esc(s.channel_title || "— not linked —")}</div>
+      <div class="muted mono">${esc(s.channel_id || "")}</div>
+      <div class="fields" style="margin-top:10px">
+        <label class="stack">Store slug<input id="d-slug" value="${esc(s.channel_slug || "")}" dir="ltr" placeholder="e.g. said-shop"></label>
+        <label class="stack">Status
+          <select id="d-status">
+            <option value="pending">Pending</option>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+          </select>
+        </label>
+      </div>
+      <div class="editor-actions" style="margin-top:10px">
+        <button class="ghost" id="d-suggest" type="button">Use channel name</button>
+        <button class="primary" id="d-save-store" type="button">Save store</button>
+      </div>
+      ${s.channel_slug ? `<div style="margin-top:8px"><a class="text-link mono" target="_blank" href="/c/${encodeURIComponent(s.channel_slug)}">/c/${esc(s.channel_slug)} ↗</a></div>` : ""}
+    </div>
+    <div class="panel">
+      <h3>Subscription ${sub ? phaseBadge(sub.phase) : ""}</h3>
+      ${sub ? `<div class="muted">${esc(sub.plan_name || "")} · ${fmtMAD(sub.amount_minor)}/${esc(sub.billing_cycle || "")} · ${dueText({ ...sub })}</div>` : '<div class="muted">No subscription yet.</div>'}
+      <div class="editor-actions" style="margin-top:10px">
+        <button class="ghost" id="d-plan" type="button">Set plan</button>
+        <button class="ghost" id="d-trial" type="button">Start 14-day trial</button>
+        <button class="ghost" id="d-pay" type="button">Record payment</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Catalog build (onboarding)</h3>
+      <div class="muted">Pay-first flow: record his estimate now, reconcile the exact count after the build.</div>
+      <div class="fields" style="margin-top:10px">
+        <label class="stack">Rate (MAD / product)<input id="d-rate" type="number" min="0" value="2"></label>
+        <label class="stack">Published products<input value="${summary.published_products}" disabled></label>
+      </div>
+      <div id="d-build-math" class="muted" style="margin-top:8px"></div>
+      <div class="editor-actions" style="margin-top:10px">
+        <button class="ghost" id="d-estimate" type="button">Record estimate upfront</button>
+        <button class="primary" id="d-balance" type="button">Record balance</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Analytics (last 30 days)</h3>
+      <div id="d-analytics"><div class="muted">Loading…</div></div>
+    </div>
+    <div class="panel">
+      <h3>Payments (${payments.length}) · total ${fmtMAD(summary.total_paid_minor)}</h3>
+      <div>${payments.map((p) => `<div class="due-row"><strong>${fmtMAD(p.amount_minor)}</strong><span class="badge ${p.kind === "onboarding" ? "b-blue" : "b-green"}">${p.kind === "onboarding" ? "build" : "sub"}</span><span class="badge b-gray">${esc(p.method || "")}</span><span class="grow" style="flex:1"></span><span class="muted mono">${fmtDate(p.paid_at)}</span></div>`).join("") || '<div class="muted">No payments.</div>'}</div>
+    </div>
+    <div class="panel">
+      <h3>Products · ${summary.products} (${summary.published_products} published)</h3>
+      <div class="editor-actions">
+        <button class="ghost" id="d-products" type="button">View products</button>
+        <button class="ghost" id="d-queue" type="button">Open queue</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Notes &amp; timeline</h3>
+      <div class="fields">
+        <label class="stack span-2">Add note<textarea id="d-note" rows="2"></textarea></label>
+      </div>
+      <div class="editor-actions" style="margin-top:8px">
+        <button class="ghost" id="d-note-save" type="button">Save note</button>
+        <button class="ghost" id="d-revoke" type="button">Revoke supplier sessions</button>
+      </div>
+      <div style="margin-top:10px">${timeline.map((e) => `<div class="due-row"><span class="badge b-gray">${esc(e.event_type)}</span><span class="muted">${esc(e.actor || "")}</span><span class="grow" style="flex:1"></span><span class="muted mono">${fmtDate(e.created_at)}</span></div>`).join("") || '<div class="muted">No events.</div>'}</div>
+    </div>`;
+  $("d-status").value = s.status;
+  const buildMath = () => {
+    const rate = Number($("d-rate").value || 0);
+    const exact = Math.round(summary.published_products * rate * 100);
+    const paid = summary.onboarding_paid_minor || 0;
+    const remaining = exact - paid;
+    $("d-build-math").innerHTML =
+      `Exact: <strong>${fmtMAD(exact)}</strong> (${summary.published_products} products × ${rate} MAD) · ` +
+      `paid: <strong>${fmtMAD(paid)}</strong> · ` +
+      (remaining > 0 ? `remaining: <strong>${fmtMAD(remaining)}</strong>` : `<strong>Settled ✓</strong>`);
+    return { rate, exact, paid, remaining };
+  };
+  buildMath();
+  $("d-rate").addEventListener("input", buildMath);
+  $("d-estimate").addEventListener("click", () => {
+    const { rate } = buildMath();
+    openPaymentModal(id, { kind: "onboarding", amount: "", note: `Upfront estimate (~${summary.published_products} products × ${rate} MAD)` });
+  });
+  $("d-balance").addEventListener("click", () => {
+    const { rate, exact, paid, remaining } = buildMath();
+    if (remaining <= 0) {
+      toast("Nothing remaining — settled");
+      return;
+    }
+    openPaymentModal(id, {
+      kind: "onboarding",
+      amount: remaining / 100,
+      note: `Catalog build balance: ${summary.published_products} products × ${rate} MAD = ${fmtMAD(exact)} (paid ${fmtMAD(paid)})`,
+    });
+  });
+  loadDrawerAnalytics(id);
+  $("d-save-profile").addEventListener("click", async () => {
+    try {
+      await j(`/api/suppliers/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: $("d-name").value.trim(),
+          username: $("d-user").value.trim(),
+          whatsapp: $("d-wa").value.trim(),
+          telegram_id: $("d-tg").value.trim(),
+        }),
+      });
+      toast("Profile saved");
+      await refreshAll();
+      openSupplier(id);
+    } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+  });
+  $("d-suggest").addEventListener("click", () => {
+    const sug = suggestSlug(s.channel_title || s.name);
+    if (sug) $("d-slug").value = sug;
+    else toast("No channel name to base the slug on", true);
+  });
+  $("d-save-store").addEventListener("click", async () => {
+    try {
+      await j(`/api/suppliers/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel_slug: $("d-slug").value.trim().toLowerCase(), status: $("d-status").value }),
+      });
+      toast("Store saved");
+      await refreshAll();
+      openSupplier(id);
+    } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+  });
+  $("d-plan").addEventListener("click", () => openSubscriptionModal(id, sub));
+  $("d-trial").addEventListener("click", () => startTrial(id));
+  $("d-pay").addEventListener("click", () => openPaymentModal(id));
+  $("d-products").addEventListener("click", () => {
+    closeDrawer();
+    go("products");
+    $("pub-supplier").value = String(id);
+    loadPublished().catch((e) => toast(e.message, true));
+  });
+  $("d-queue").addEventListener("click", () => {
+    closeDrawer();
+    go("queue");
+    supplierEl.value = String(id);
+    loadPosts(true).catch((e) => toast(e.message, true));
+  });
+  $("d-note-save").addEventListener("click", async () => {
+    const text = $("d-note").value.trim();
+    if (!text) return;
+    try {
+      await j(`/api/suppliers/${id}/notes`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      toast("Note saved");
+      openSupplier(id);
+    } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+  });
+  $("d-revoke").addEventListener("click", async () => {
+    try {
+      const r = await j(`/api/suppliers/${id}/revoke-sessions`, { method: "POST" });
+      toast(`Revoked ${r.revoked} sessions`);
+      openSupplier(id);
+    } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+  });
+}
+
+async function loadDrawerAnalytics(id) {
+  const box = $("d-analytics");
+  if (!box) return;
+  try {
+    const a = await j(`/api/suppliers/${id}/analytics?days=30`);
+    const last14 = a.by_day.slice(-14);
+    const max = Math.max(1, ...last14.map((d) => Number(d.views || 0)));
+    box.innerHTML = `
+      <div class="muted">Today <strong>${a.today}</strong> · 30d total <strong>${a.total}</strong></div>
+      <div class="bars" style="margin-top:8px">${last14.map((d) =>
+        `<div style="height:${Math.max(6, Math.round((Number(d.views || 0) / max) * 52))}px" title="${d.day}: ${d.views}"></div>`).join("")}</div>
+      <div style="margin-top:8px">${a.top_products.slice(0, 5).map((p) =>
+        `<div class="due-row"><span>${esc(p.name)}</span><span class="grow" style="flex:1"></span><strong>${p.views}</strong></div>`).join("") || '<div class="muted">No product views yet.</div>'}</div>`;
+  } catch {
+    box.innerHTML = '<div class="muted">Analytics unavailable.</div>';
+  }
+}
+
+function openSupplierModal() {
+  openModal("Add supplier", `
+    <div class="fields">
+      <label class="stack">Name<input id="ns-name" placeholder="Shop name"></label>
+      <label class="stack">WhatsApp<input id="ns-wa" placeholder="0612345678" dir="ltr"></label>
+      <label class="stack">Store slug<input id="ns-slug" placeholder="said-shop" dir="ltr"></label>
+      <label class="stack">Telegram ID (optional)<input id="ns-tg" placeholder="123456789" dir="ltr"></label>
+    </div>
+    <div class="editor-actions" style="margin-top:12px">
+      <button class="primary" id="ns-save" type="button">Create</button>
+    </div>
+    <p class="muted">Usually suppliers self-register via the Telegram bot. Manual creation is for migration.</p>`);
+  $("ns-save").addEventListener("click", async () => {
+    try {
+      const r = await j("/api/suppliers", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: $("ns-name").value.trim(),
+          whatsapp: $("ns-wa").value.trim(),
+          channel_slug: $("ns-slug").value.trim().toLowerCase(),
+          telegram_id: $("ns-tg").value.trim(),
+          status: "pending",
+        }),
+      });
+      closeModal();
+      toast("Supplier created");
+      await refreshAll();
+      openSupplier(r.id);
+    } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+  });
+}
+
+function subFormHtml(sub) {
+  const v = (k, d = "") => sub?.[k] ?? d;
+  return `
+    <div class="fields">
+      <label class="stack">Plan name<input id="sb-plan" value="${esc(v("plan_name", "Standard"))}"></label>
+      <label class="stack">Status
+        <select id="sb-status">
+          ${["trial", "active", "paused", "churned"].map((s) => `<option value="${s}">${s}</option>`).join("")}
+        </select>
+      </label>
+      <label class="stack">Amount (MAD)<input id="sb-amount" type="number" min="0" value="${sub ? Math.round((sub.amount_minor || 0) / 100) : ""}"></label>
+      <label class="stack">Billing cycle
+        <select id="sb-cycle">
+          ${["monthly", "quarterly", "yearly", "custom"].map((s) => `<option value="${s}">${s}</option>`).join("")}
+        </select>
+      </label>
+      <label class="stack">Period start<input id="sb-ps" type="date" value="${esc(v("period_start") || "")}"></label>
+      <label class="stack">Period end<input id="sb-pe" type="date" value="${esc(v("period_end") || "")}"></label>
+      <label class="stack">Next due<input id="sb-due" type="date" value="${esc(v("next_due_at") || "")}"></label>
+      <label class="stack">Trial ends<input id="sb-trial" type="date" value="${esc(v("trial_ends_at") || "")}"></label>
+      <label class="stack">Grace days<input id="sb-grace" type="number" min="0" max="90" value="${sub?.grace_days ?? 3}"></label>
+      <label class="stack">Follow up<input id="sb-fu" type="date" value="${esc(v("next_follow_up_at") || "")}"></label>
+      <label class="stack span-2">Internal note<textarea id="sb-note" rows="2">${esc(v("internal_note") || "")}</textarea></label>
+    </div>
+    <div class="editor-actions" style="margin-top:12px">
+      <button class="primary" id="sb-save" type="button">Save subscription</button>
+    </div>`;
+}
+
+function openSubscriptionModal(id, sub) {
+  openModal("Subscription", subFormHtml(sub));
+  $("sb-status").value = sub?.status || "trial";
+  $("sb-cycle").value = sub?.billing_cycle || "monthly";
+  $("sb-save").addEventListener("click", async () => {
+    const dh = Number($("sb-amount").value || 0);
+    try {
+      await j(`/api/suppliers/${id}/subscription`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan_name: $("sb-plan").value.trim(),
+          amount_minor: Math.round(dh * 100),
+          currency: "MAD",
+          billing_cycle: $("sb-cycle").value,
+          period_start: $("sb-ps").value || null,
+          period_end: $("sb-pe").value || null,
+          next_due_at: $("sb-due").value || null,
+          grace_days: Number($("sb-grace").value || 0),
+          status: $("sb-status").value,
+          trial_ends_at: $("sb-trial").value || null,
+          next_follow_up_at: $("sb-fu").value || null,
+          internal_note: $("sb-note").value,
+        }),
+      });
+      closeModal();
+      toast("Subscription saved");
+      await refreshAll();
+      openSupplier(id);
+    } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+  });
+}
+
+async function startTrial(id) {
+  const in14 = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+  try {
+    await j(`/api/suppliers/${id}/subscription`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plan_name: "Trial", amount_minor: 0, currency: "MAD", billing_cycle: "monthly",
+        period_start: null, period_end: null, next_due_at: null, grace_days: 3,
+        status: "trial", trial_ends_at: in14, next_follow_up_at: null, internal_note: "",
+      }),
+    });
+    toast("14-day trial started");
+    await refreshAll();
+    openSupplier(id);
+  } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+}
+
+async function extendSub(id, days) {
+  const detail = await j(`/api/suppliers/${id}/detail`).catch(() => null);
+  if (!detail?.subscription) {
+    toast("Set a subscription first", true);
+    return;
+  }
+  const sub = detail.subscription;
+  const base = sub.next_due_at || new Date().toISOString().slice(0, 10);
+  const next = new Date(new Date(`${base}T00:00:00Z`).getTime() + days * 864e5).toISOString().slice(0, 10);
+  try {
+    await j(`/api/suppliers/${id}/subscription`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...sub, next_due_at: next }),
+    });
+    toast(`Extended +${days}d`);
+    await refreshAll();
+  } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+}
+
+function openPaymentModal(presetSupplier = "", preset = {}) {
+  const opts = suppliers.map((s) => `<option value="${s.id}">${esc(s.name || `#${s.id}`)}</option>`).join("");
+  const today = new Date().toISOString().slice(0, 10);
+  openModal(preset.kind === "onboarding" ? "Record catalog-build payment" : "Record payment", `
+    <div class="fields">
+      <label class="stack">Supplier
+        <select id="pm-sup">${opts}</select>
+      </label>
+      <label class="stack">Kind
+        <select id="pm-kind">
+          <option value="subscription">Subscription</option>
+          <option value="onboarding">Catalog build</option>
+        </select>
+      </label>
+      <label class="stack">Amount (MAD)<input id="pm-amount" type="number" min="1" placeholder="500" value="${preset.amount ?? ""}"></label>
+      <label class="stack">Method
+        <select id="pm-method"><option>cash</option><option>bank</option><option>wafacash</option><option>cmi</option><option>other</option></select>
+      </label>
+      <label class="stack">Paid on<input id="pm-date" type="date" value="${today}"></label>
+      <label class="stack">Reference (optional)<input id="pm-ref" placeholder=""></label>
+      <label class="stack span-2">Note (optional)<input id="pm-note" placeholder="" value="${esc(preset.note ?? "")}"></label>
+      <label class="check span-2">Extend 30 days from paid date
+        <input id="pm-extend" type="checkbox" ${preset.kind === "onboarding" ? "" : "checked"}>
+      </label>
+    </div>
+    <div class="editor-actions" style="margin-top:12px">
+      <button class="primary" id="pm-save" type="button">Record payment</button>
+    </div>
+    <p class="muted">Upfront estimates go in as Catalog build payments — reconcile the exact count after the build.</p>`);
+  if (presetSupplier) $("pm-sup").value = String(presetSupplier);
+  if (preset.kind) $("pm-kind").value = preset.kind;
+  $("pm-save").addEventListener("click", async () => {
+    const sid = Number($("pm-sup").value);
+    const dh = Number($("pm-amount").value || 0);
+    const paid = $("pm-date").value;
+    if (!sid || !dh || !paid) {
+      toast("Supplier, amount and date are required", true);
+      return;
+    }
+    const extend = $("pm-extend").checked && $("pm-kind").value === "subscription";
+    const end = extend ? new Date(new Date(`${paid}T00:00:00Z`).getTime() + 30 * 864e5).toISOString().slice(0, 10) : null;
+    try {
+      await j(`/api/suppliers/${sid}/payments`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount_minor: Math.round(dh * 100),
+          currency: "MAD",
+          paid_at: paid,
+          method: $("pm-method").value,
+          kind: $("pm-kind").value,
+          external_reference: $("pm-ref").value.trim(),
+          note: $("pm-note").value.trim(),
+          period_start: extend ? paid : null,
+          period_end: end,
+          next_due_at: end,
+        }),
+      });
+      closeModal();
+      toast("Payment recorded");
+      await refreshAll();
+    } catch (e) { if (e.message !== "auth") toast(e.message, true); }
+  });
+}
+
+// ---------- submissions ----------
+async function loadSubs(reset) {
+  if (reset) {
+    subsOffset = 0;
+    subs = [];
+  }
+  const params = new URLSearchParams({
+    status: $("sub-status").value,
+    supplier_id: $("sub-supplier").value,
+    offset: String(subsOffset),
+    limit: "30",
+  });
+  const data = await j(`/api/submissions?${params}`);
+  subs = reset ? data.items || [] : subs.concat(data.items || []);
+  subsOffset = subs.length;
+  subsTotal = data.total || 0;
+  renderSubs();
+}
+
+function renderSubs() {
+  const box = $("subs");
+  box.replaceChildren();
+  const badge = $("subs-badge");
+  const fresh = suppliers.reduce((n, s) => n + (s.new_submissions || 0), 0);
+  badge.hidden = !fresh;
+  badge.textContent = fresh ? String(fresh) : "";
+  if (!subs.length) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "Nothing here";
+    box.append(p);
+  }
+  for (const sub of subs) {
+    const row = document.createElement("div");
+    row.className = "sub-row";
+    const subImages = parseImages(sub);
+    if (subImages[0]) {
+      const img = thumb(subImages[0]);
+      img.className = "q-img";
+      row.append(img);
+    }
+    const copy = document.createElement("div");
+    copy.className = "sub-copy";
+    const meta = document.createElement("span");
+    meta.className = "q-meta";
+    const supp = supplierById(sub.supplier_id);
+    meta.textContent = [supp?.name || `#${sub.supplier_id}`, subImages.length > 1 ? `${subImages.length} photos` : "", sub.status, sub.id ? `#${sub.id}` : ""].filter(Boolean).join(" · ");
+    const txt = document.createElement("div");
+    txt.className = "sub-text";
+    txt.textContent = (sub.text || "").slice(0, 300) || "(no text)";
+    copy.append(meta, txt);
+    const actions = document.createElement("div");
+    actions.className = "sub-actions";
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "primary";
+    add.textContent = "Add to catalog";
+    add.addEventListener("click", () => buildFromSubmission(sub));
+    const skipBtn = document.createElement("button");
+    skipBtn.type = "button";
+    skipBtn.className = "ghost";
+    skipBtn.textContent = "Skip";
+    skipBtn.addEventListener("click", async () => {
+      await j("/api/submissions/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [sub.id], status: "skipped" }),
+      });
+      toast("Skipped");
+      await loadSubs(true);
+      await loadSuppliers();
+    });
+    actions.append(add, skipBtn);
+    row.append(copy, actions);
+    box.append(row);
+  }
+  $("subs-more").hidden = subs.length >= subsTotal;
+}
+
+// Every image attached to a submission: the images[] array (albums) with a
+// fallback to the legacy single image column.
+function parseImages(sub) {
+  try {
+    const arr = typeof sub.images === "string" ? JSON.parse(sub.images) : sub.images;
+    if (Array.isArray(arr) && arr.length) return arr.filter((f) => typeof f === "string" && f);
+  } catch {
+    /* fall through to single image */
+  }
+  return sub.image ? [sub.image] : [];
+}
+
+function buildFromSubmission(sub) {
+  const supp = supplierById(sub.supplier_id);
+  resetEditorState();
+  pendingSubmissionIds = [sub.id];
+  pendingSupplierId = sub.supplier_id;
+  setNote("");
+  // All album photos travel together — never just the first one.
+  selImages = parseImages(sub);
+  const phones = supp?.whatsapp ? [supp.whatsapp] : [];
+  emptyEl.hidden = true;
+  editor.hidden = false;
+  $("post-text").textContent = sub.text || "(no text)";
+  $("post-phone").hidden = phones.length === 0;
+  $("post-phone").textContent = phones.length ? `Supplier WhatsApp: ${phones.join(", ")}` : "";
+  $("f-name").value = suggestedName(sub.text || "");
+  $("f-price").value = "";
+  $("f-por").checked = false;
+  $("f-stock").value = "";
+  $("f-moq").value = "";
+  $("f-desc").value = "";
+  specs = [];
+  renderSpecs();
+  tiers = [];
+  renderTiers();
+  $("source").textContent = supp?.channel_title || supp?.name || "";
+  formError.hidden = true;
+  $("picker").hidden = true;
+  renderSelImages();
+  renderContact(phones);
+  go("queue");
+  editor.scrollIntoView({ behavior: "smooth", block: "start" });
+  $("f-name").focus();
+}
+
+// ---------- overview + payments pages ----------
+async function loadStats() {
+  statsCache = await j("/api/admin/stats");
+  renderStats();
+}
+
+function renderStats() {
+  const s = statsCache;
+  if (!s) return;
+  $("stat-cards").innerHTML = `
+    <div class="stat-card"><div class="stat-label">Suppliers</div><div class="stat-num">${s.suppliers.total}</div><div class="stat-sub">${s.suppliers.active} active · ${s.suppliers.pending} pending</div></div>
+    <div class="stat-card"><div class="stat-label">Products</div><div class="stat-num">${s.products.published}</div><div class="stat-sub">${s.products.drafts} drafts · ${s.products.total} total</div></div>
+    <div class="stat-card"><div class="stat-label">New submissions</div><div class="stat-num">${s.submissions_new}</div><div class="stat-sub">awaiting review</div></div>
+    <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-num">${fmtMAD(s.payments.total_minor)}</div><div class="stat-sub">${s.payments.count} payments</div></div>
+    <div class="stat-card"><div class="stat-label">Catalog views</div><div class="stat-num">${s.views.last_7d}</div><div class="stat-sub">${s.views.today} today · last 7 days</div></div>`;
+  const box = $("due-list");
+  if (!s.attention.length) {
+    box.innerHTML = '<div class="muted">Nothing due soon.</div>';
+    return;
+  }
+  box.replaceChildren();
+  for (const a of s.attention) {
+    const row = document.createElement("div");
+    row.className = "due-row";
+    const nm = document.createElement("strong");
+    nm.textContent = a.name || `#${a.id}`;
+    nm.style.cursor = "pointer";
+    nm.addEventListener("click", () => openSupplier(a.id));
+    const badge = document.createElement("span");
+    badge.innerHTML = phaseBadge(a.phase);
+    const when = document.createElement("span");
+    when.className = "muted mono";
+    when.textContent = a.phase.startsWith("trial") ? `trial ends ${fmtDate(a.trial_ends_at)}` : `due ${fmtDate(a.next_due_at)}`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ghost";
+    btn.textContent = "+30d";
+    btn.addEventListener("click", () => extendSub(a.id, 30));
+    row.append(nm, badge, when);
+    const spacer = document.createElement("span");
+    spacer.style.flex = "1";
+    row.append(spacer, btn);
+    box.append(row);
+  }
+}
+
+async function loadPayments() {
+  const rows = await j("/api/admin/payments?limit=200");
+  const body = $("pay-rows");
+  body.replaceChildren();
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 6;
+    td.className = "muted";
+    td.textContent = "No payments yet.";
+    tr.append(td);
+    body.append(tr);
+    return;
+  }
+  for (const p of rows) {
+    const tr = document.createElement("tr");
+    const period = [fmtDate(p.period_start), fmtDate(p.period_end)].some((d) => d !== "—")
+      ? `${fmtDate(p.period_start)} → ${fmtDate(p.period_end)}`
+      : "—";
+    tr.innerHTML = `<td class="mono">#${p.id}</td><td>${esc(p.supplier_name || `#${p.supplier_id}`)}</td>
+      <td><strong>${fmtMAD(p.amount_minor)}</strong></td><td>${esc(p.method || "")}</td>
+      <td class="muted mono">${esc(period)}</td><td class="muted mono">${fmtDate(p.paid_at)}</td>`;
+    tr.addEventListener("click", () => openSupplier(p.supplier_id));
+    body.append(tr);
+  }
+}
+
+// ---------- events ----------
+for (const btn of document.querySelectorAll("[data-page]")) {
+  btn.addEventListener("click", () => go(btn.dataset.page));
+}
+for (const btn of document.querySelectorAll("[data-go]")) {
+  btn.addEventListener("click", () => go(btn.dataset.go));
+}
+$("drawer-close").addEventListener("click", closeDrawer);
+$("drawer-backdrop").addEventListener("click", closeDrawer);
+$("modal-backdrop").addEventListener("click", closeModal);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("modal-wrap").hidden) closeModal();
+});
+$("refresh").addEventListener("click", () => refreshAll().catch((e) => toast(e.message, true)));
+$("supp-add").addEventListener("click", openSupplierModal);
+$("pay-add").addEventListener("click", () => openPaymentModal());
+$("logout").addEventListener("click", async () => {
+  await fetch("/api/logout", { method: "POST" });
+  location.href = "/login";
+});
 
 document.addEventListener("mouseover", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLImageElement) || target.id === "preview" || !target.dataset.full) return;
   preview.src = target.dataset.full;
   preview.hidden = false;
-  placePreview(event);
+  const width = 300, height = 300;
+  let x = event.clientX + 16, y = event.clientY + 16;
+  if (x + width > window.innerWidth) x = event.clientX - width - 16;
+  if (y + height > window.innerHeight) y = Math.max(8, event.clientY - height - 16);
+  preview.style.left = `${x}px`;
+  preview.style.top = `${y}px`;
 });
 document.addEventListener("mousemove", (event) => {
-  if (!preview.hidden) placePreview(event);
+  if (preview.hidden) return;
+  const width = 300, height = 300;
+  let x = event.clientX + 16, y = event.clientY + 16;
+  if (x + width > window.innerWidth) x = event.clientX - width - 16;
+  if (y + height > window.innerHeight) y = Math.max(8, event.clientY - height - 16);
+  preview.style.left = `${x}px`;
+  preview.style.top = `${y}px`;
 });
 document.addEventListener("mouseout", (event) => {
   if (event.target instanceof HTMLImageElement && event.target.id !== "preview") preview.hidden = true;
@@ -615,6 +1482,7 @@ $("btn-add-img").addEventListener("click", () => {
   }
 });
 $("btn-add-spec").addEventListener("click", () => addSpecRow("", ""));
+$("btn-add-tier").addEventListener("click", () => addTierRow("", null, ""));
 $("img-q").addEventListener("input", () => {
   imgQuery = $("img-q").value.trim();
   clearTimeout(imgTimer);
@@ -627,650 +1495,19 @@ queryEl.addEventListener("input", () => {
   queryTimer = setTimeout(() => loadPosts(true).catch((err) => setNote(err.message)), 200);
 });
 statusEl.addEventListener("change", () => loadPosts(true).catch((err) => setNote(err.message)));
+channelEl.addEventListener("change", () => loadPosts(true).catch((err) => setNote(err.message)));
 supplierEl.addEventListener("change", () => {
   selected.clear();
   loadPosts(true).catch((err) => setNote(err.message));
 });
-channelEl.addEventListener("change", () => loadPosts(true).catch((err) => setNote(err.message)));
-$("logout").addEventListener("click", async () => {
-  await fetch("/api/logout", { method: "POST" });
-  location.href = "/login";
-});
-
-async function fillCategories() {
-  const categories = await j("/api/categories");
-  const select = $("f-category");
-  select.replaceChildren(new Option("— اختر —", ""));
-  for (const name of categories) select.append(new Option(name, name));
-}
-
-// ---------- WORKFLOW.md Phase 1: suppliers + submissions ----------
-let suppliers = [];
-let subs = [];
-let subsOffset = 0;
-let subsTotal = 0;
-let pendingSubmissionIds = [];
-let pendingSupplierId = null;
-let editingId = null;
-let lastPublished = [];
-let selectedSupplierId = null;
-let selectedSupplierDetail = null;
-
-const billingLabels = {
-  unconfigured: "بلا اشتراك",
-  trial: "تجريبي",
-  trial_ending: "التجربة غتسالي",
-  trial_ended: "التجربة سالات",
-  active: "نشط",
-  due_soon: "الأداء قريب",
-  due_today: "الأداء اليوم",
-  grace: "فمدة السماح",
-  overdue: "متأخر",
-  paused: "موقوف",
-  churned: "غادر",
-};
-
-function formatMoney(minor, currency = "MAD") {
-  return new Intl.NumberFormat("ar-MA", { style: "currency", currency, minimumFractionDigits: 2 }).format(Number(minor || 0) / 100);
-}
-
-function readableDate(value) {
-  if (!value) return "—";
-  const source = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value.replace(" ", "T");
-  const date = new Date(source);
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("ar-MA", { dateStyle: "medium" }).format(date);
-}
-
-function isoToday() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
-function cycleEnd(start, cycle) {
-  if (!start || cycle === "custom") return "";
-  const date = new Date(`${start}T12:00:00`);
-  if (cycle === "monthly") date.setMonth(date.getMonth() + 1);
-  if (cycle === "quarterly") date.setMonth(date.getMonth() + 3);
-  if (cycle === "yearly") date.setFullYear(date.getFullYear() + 1);
-  return date.toISOString().slice(0, 10);
-}
-
-function dirhamToMinor(value) {
-  const normalized = String(value || "").trim().replace(",", ".");
-  const number = Number(normalized);
-  return Number.isFinite(number) ? Math.round(number * 100) : NaN;
-}
-
-function makeStat(label, value, tone = "") {
-  const card = document.createElement("div");
-  card.className = `billing-card ${tone}`.trim();
-  const strong = document.createElement("strong");
-  strong.textContent = value;
-  const span = document.createElement("span");
-  span.textContent = label;
-  card.append(strong, span);
-  return card;
-}
-
-function resetEditorState() {
-  selected.clear();
-  pendingSubmissionIds = [];
-  pendingSupplierId = null;
-  editingId = null;
-  $("edit-badge").hidden = true;
-  $("publish").textContent = "نشر";
-}
-
-function switchTab(name) {
-  for (const [btn, view, key] of [["tab-posts", "view-posts", "posts"], ["tab-products", "view-products", "products"], ["tab-subs", "view-subs", "subs"], ["tab-supp", "view-supp", "supp"]]) {
-    $(view).hidden = key !== name;
-    $(btn).setAttribute("aria-selected", key === name ? "true" : "false");
-  }
-  document.body.classList.toggle("admin-wide", name !== "posts");
-}
-
-function supplierById(id) {
-  return suppliers.find((s) => s.id === id);
-}
-
-async function loadSuppliers() {
-  suppliers = await j("/api/suppliers");
-  renderSuppliers();
-  const curQ = supplierEl.value;
-  supplierEl.replaceChildren(new Option("اختار المورّد", ""), ...suppliers.map((s) => new Option(`${s.name || `#${s.id}`} · ${s.status}`, String(s.id))), new Option("بلا مورّد (قديم)", "unlinked"));
-  if ([...supplierEl.options].some((o) => o.value === curQ)) supplierEl.value = curQ;
-  const opts = [new Option("كل المورّدين", ""), ...suppliers.map((s) => new Option(`${s.name || `#${s.id}`} · ${s.status}`, String(s.id)))];
-  const sel = $("sub-supplier");
-  const cur = sel.value;
-  sel.replaceChildren(...opts);
-  if ([...opts].some((o) => o.value === cur)) sel.value = cur;
-  const m = $("m-supplier");
-  m.replaceChildren(...suppliers.map((s) => new Option(s.name || `#${s.id}`, String(s.id))));
-  const pub = $("pub-supplier");
-  const pubCur = pub.value;
-  pub.replaceChildren(new Option("كل المورّدين", ""), ...suppliers.map((s) => new Option(s.name || `#${s.id}`, String(s.id))), new Option("بلا مورّد (قديم)", "unlinked"));
-  if ([...pub.options].some((o) => o.value === pubCur)) pub.value = pubCur;
-}
-
-function renderSuppliers() {
-  const box = $("suppliers");
-  box.replaceChildren();
-  const overview = $("billing-overview");
-  const attention = suppliers.filter((s) => ["overdue", "grace", "due_today", "trial_ended"].includes(s.phase)).length;
-  const soon = suppliers.filter((s) => ["due_soon", "trial_ending"].includes(s.phase)).length;
-  const active = suppliers.filter((s) => ["active", "trial"].includes(s.phase)).length;
-  overview.replaceChildren(
-    makeStat("الموردون", String(suppliers.length)),
-    makeStat("خاص المتابعة", String(attention), attention ? "danger" : ""),
-    makeStat("قريب يخلص", String(soon), soon ? "warn" : ""),
-    makeStat("مزيان دابا", String(active), "good"),
-  );
-  const needle = $("supp-q").value.trim().toLowerCase();
-  const filter = $("supp-billing-filter").value;
-  const shown = suppliers.filter((s) => {
-    const matchesText = !needle || `${s.name || ""} ${s.whatsapp || ""} ${s.channel_slug || ""} ${s.username || ""}`.toLowerCase().includes(needle);
-    const matchesFilter = !filter
-      || (filter === "attention" && ["overdue", "grace", "due_today", "trial_ended"].includes(s.phase))
-      || (filter === "trial" && ["trial", "trial_ending", "trial_ended"].includes(s.phase))
-      || s.phase === filter;
-    return matchesText && matchesFilter;
-  });
-  if (!shown.length) {
-    const p = document.createElement("p");
-    p.className = "muted";
-    p.textContent = suppliers.length ? "ما لقينا حتى مورّد بهاد الفلتر" : "مازال ما كاين حتى مورّد — زيد الأول الفوق";
-    box.append(p);
-    return;
-  }
-  for (const s of shown) {
-    const row = document.createElement("div");
-    row.className = "crm-supplier";
-    const main = document.createElement("button");
-    main.type = "button";
-    main.className = "crm-supplier-main";
-    main.addEventListener("click", () => openSupplierDetail(s.id).catch((err) => setNote(err.message)));
-    const title = document.createElement("span");
-    title.className = "supp-name";
-    title.textContent = s.name || `#${s.id}`;
-    const badge = document.createElement("span");
-    badge.className = `billing-badge phase-${s.phase}`;
-    badge.textContent = billingLabels[s.phase] || s.phase;
-    const meta = document.createElement("span");
-    meta.className = "crm-supplier-meta";
-    const due = s.next_due_at ? `الأداء ${readableDate(s.next_due_at)}` : "ما تحددش الأداء";
-    meta.textContent = `${s.product_count || 0} منتج · ${due}${s.new_submissions ? ` · ${s.new_submissions} مرسلات جداد` : ""}`;
-    main.append(title, badge, meta);
-    const quick = document.createElement("div");
-    quick.className = "crm-supplier-quick";
-    const wa = document.createElement("input");
-    wa.value = s.whatsapp || "";
-    wa.placeholder = "واتساب";
-    wa.dir = "ltr";
-    wa.setAttribute("aria-label", "واتساب");
-    const slug = document.createElement("input");
-    slug.value = s.channel_slug || "";
-    slug.placeholder = "slug";
-    slug.dir = "ltr";
-    slug.setAttribute("aria-label", "سيلغ المتجر");
-    const st = document.createElement("select");
-    for (const [v, label] of [["pending", "بانتظار"], ["active", "نشط"], ["paused", "موقوف"]]) {
-      st.append(new Option(label, v));
-    }
-    st.value = s.status;
-    const save = document.createElement("button");
-    save.type = "button";
-    save.className = "ghost";
-    save.textContent = "حفظ الحالة";
-    save.addEventListener("click", async () => {
-      try {
-        await j(`/api/suppliers/${s.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ whatsapp: wa.value.trim(), channel_slug: slug.value.trim().toLowerCase(), status: st.value }),
-        });
-        await loadSuppliers();
-        await loadChannels();
-        setNote("");
-      } catch (err) {
-        if (err.message !== "auth") setNote(err.message || "تعذر الحفظ");
-      }
-    });
-    const link = document.createElement("span");
-    link.className = "muted";
-    link.textContent = s.channel_slug ? `/c/${s.channel_slug}` : "بلا متجر";
-    quick.append(wa, slug, st, save, link);
-    row.append(main, quick);
-    box.append(row);
-  }
-}
-
-async function openSupplierDetail(id) {
-  selectedSupplierId = id;
-  selectedSupplierDetail = await j(`/api/suppliers/${id}/detail`);
-  $("supplier-directory").hidden = true;
-  $("supplier-detail").hidden = false;
-  renderSupplierDetail();
-  $("view-supp").scrollIntoView({ block: "start" });
-}
-
-function renderSupplierDetail() {
-  const data = selectedSupplierDetail;
-  if (!data) return;
-  const supplier = data.supplier;
-  const sub = data.subscription;
-  $("supplier-detail-name").textContent = supplier.name || `المورّد #${supplier.id}`;
-  $("supplier-detail-meta").textContent = [`#${supplier.id}`, supplier.whatsapp, supplier.channel_slug ? `/c/${supplier.channel_slug}` : "", supplier.status === "active" ? "المتجر نشط" : "المتجر غير نشط"].filter(Boolean).join(" · ");
-  $("link-channel-id").value = supplier.channel_id || "";
-  $("link-channel-title").value = supplier.channel_title || "";
-  $("link-channel-slug").value = supplier.channel_slug || "";
-  $("channel-link-error").hidden = true;
-  const phase = sub?.phase || "unconfigured";
-  $("billing-phase").className = `billing-badge phase-${phase}`;
-  $("billing-phase").textContent = billingLabels[phase] || phase;
-  $("supplier-summary").replaceChildren(
-    makeStat("كل المنتجات", String(data.summary.products || 0)),
-    makeStat("المنتجات المنشورة", String(data.summary.published_products || 0)),
-    makeStat("مجموع الأداءات", formatMoney(data.summary.total_paid_minor, sub?.currency || "MAD"), "good"),
-    makeStat("الباقي فهاد الفترة", formatMoney(data.summary.outstanding_minor, sub?.currency || "MAD"), data.summary.outstanding_minor ? "warn" : ""),
-  );
-  $("b-plan").value = sub?.plan_name || "";
-  $("b-amount").value = sub ? (Number(sub.amount_minor || 0) / 100).toFixed(2) : "";
-  $("b-cycle").value = sub?.billing_cycle || "monthly";
-  $("b-status").value = sub?.status || "active";
-  $("b-period-start").value = sub?.period_start || "";
-  $("b-period-end").value = sub?.period_end || "";
-  $("b-next-due").value = sub?.next_due_at || "";
-  $("b-grace").value = String(sub?.grace_days ?? 3);
-  $("b-trial-end").value = sub?.trial_ends_at || "";
-  $("b-follow-up").value = sub?.next_follow_up_at || "";
-  $("b-note").value = sub?.internal_note || "";
-  $("pay-amount").value = sub ? (Number(sub.amount_minor || 0) / 100).toFixed(2) : "";
-  $("pay-date").value = isoToday();
-  $("pay-period-start").value = sub?.period_start || isoToday();
-  $("pay-period-end").value = sub?.period_end || cycleEnd($("pay-period-start").value, sub?.billing_cycle || "monthly");
-  $("pay-next-due").value = sub?.next_due_at || $("pay-period-end").value;
-  $("pay-reference").value = "";
-  $("pay-note").value = "";
-  renderPaymentHistory(data.payments, sub?.currency || "MAD");
-  renderSupplierTimeline(data.timeline);
-}
-
-function renderPaymentHistory(payments, currency) {
-  const box = $("payment-history");
-  box.replaceChildren();
-  if (!payments.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = "ما تسجل حتى أداء دابا";
-    box.append(empty);
-    return;
-  }
-  const methodLabels = { cash: "نقدا", bank: "تحويل بنكي", wafacash: "Wafacash", cmi: "CMI", other: "أخرى" };
-  for (const payment of payments) {
-    const row = document.createElement("div");
-    row.className = "payment-row";
-    const amount = document.createElement("strong");
-    amount.textContent = formatMoney(payment.amount_minor, payment.currency || currency);
-    const copy = document.createElement("div");
-    const meta = document.createElement("span");
-    meta.textContent = `${readableDate(payment.paid_at)} · ${methodLabels[payment.method] || payment.method}`;
-    const detail = document.createElement("small");
-    detail.textContent = [payment.external_reference, payment.note, payment.period_start && payment.period_end ? `${readableDate(payment.period_start)} ← ${readableDate(payment.period_end)}` : ""].filter(Boolean).join(" · ");
-    copy.append(meta, detail);
-    row.append(amount, copy);
-    box.append(row);
-  }
-}
-
-function eventDescription(event) {
-  const details = event.details || {};
-  if (event.event_type === "admin_note") return details.text || "ملاحظة";
-  if (event.event_type === "payment_recorded") return `تسجل أداء ${formatMoney(details.amount_minor, details.currency || "MAD")}`;
-  if (event.event_type === "subscription_created") return `تسجل الاشتراك ${details.plan_name || ""}`.trim();
-  if (event.event_type === "subscription_updated") return `تبدل الاشتراك${details.plan_name ? `: ${details.plan_name}` : ""}`;
-  if (event.event_type === "supplier_created") return "تزاد المورّد";
-  if (event.event_type === "supplier_updated") return "تبدلات معلومات أو حالة المورّد";
-  if (event.event_type === "sessions_revoked") return `تسدات جلسات الدخول (${details.revoked || 0})`;
-  if (event.event_type === "access_code_generated") return "تولد كود جديد للدخول";
-  if (event.event_type === "supplier_login") return "دخل المورّد للوحة المنتجات";
-  if (event.event_type === "supplier_logout") return "خرج المورّد من لوحة المنتجات";
-  if (event.event_type === "channel_suggested") return `اقترح القناة: ${details.channel_title || "—"} (${details.channel_id || "بلا معرف"}) — بانتظار التأكيد`;
-  if (event.event_type === "channel_linked") return `تأكد ربط القناة: ${details.channel_title || details.channel_id || "—"}`;
-  if (event.event_type === "channel_linked_manual") return `ربطت الإدارة القناة يدويا: ${details.channel_title || details.channel_id || "—"}`;
-  if (event.event_type === "product_edit") return `المورّد بدّل المنتج: ${details.product_name || `#${details.product_id}`}`;
-  return event.event_type.replaceAll("_", " ");
-}
-
-function renderSupplierTimeline(events) {
-  const box = $("supplier-timeline");
-  box.replaceChildren();
-  if (!events.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = "ما كاين حتى نشاط مسجل";
-    box.append(empty);
-    return;
-  }
-  for (const event of events) {
-    const item = document.createElement("div");
-    item.className = "timeline-item";
-    const dot = document.createElement("span");
-    dot.className = "timeline-dot";
-    const copy = document.createElement("div");
-    const text = document.createElement("strong");
-    text.textContent = eventDescription(event);
-    const meta = document.createElement("small");
-    meta.textContent = `${readableDate(event.created_at)} · ${event.actor === "supplier" ? "المورّد" : "الإدارة"}`;
-    copy.append(text, meta);
-    item.append(dot, copy);
-    box.append(item);
-  }
-}
-
-async function loadSubs(reset) {
-  if (reset) {
-    subsOffset = 0;
-    subs = [];
-  }
-  const params = new URLSearchParams({
-    status: $("sub-status").value,
-    supplier_id: $("sub-supplier").value,
-    offset: String(subsOffset),
-    limit: "30",
-  });
-  const data = await j(`/api/submissions?${params}`);
-  subs = reset ? data.items || [] : subs.concat(data.items || []);
-  subsOffset = subs.length;
-  subsTotal = data.total || 0;
-  renderSubs();
-}
-
-function renderSubs() {
-  const box = $("subs");
-  box.replaceChildren();
-  const badge = $("subs-badge");
-  const fresh = suppliers.reduce((n, s) => n + (s.new_submissions || 0), 0);
-  badge.hidden = !fresh;
-  badge.textContent = fresh ? String(fresh) : "";
-  if (!subs.length) {
-    const p = document.createElement("p");
-    p.className = "muted";
-    p.textContent = "ما كاين والو هنا";
-    box.append(p);
-  }
-  for (const sub of subs) {
-    const row = document.createElement("div");
-    row.className = "sub-row";
-    if (sub.image) {
-      const img = thumb(sub.image);
-      img.className = "q-img";
-      row.append(img);
-    }
-    const copy = document.createElement("div");
-    copy.className = "sub-copy";
-    const meta = document.createElement("div");
-    meta.className = "q-meta";
-    const supp = supplierById(sub.supplier_id);
-    meta.textContent = [supp?.name || `#${sub.supplier_id}`, sub.status, sub.id ? `#${sub.id}` : ""].filter(Boolean).join(" · ");
-    const txt = document.createElement("div");
-    txt.className = "sub-text";
-    txt.textContent = (sub.text || "").slice(0, 300) || "(بلا نص)";
-    copy.append(meta, txt);
-    const actions = document.createElement("div");
-    actions.className = "sub-actions";
-    const add = document.createElement("button");
-    add.type = "button";
-    add.className = "primary";
-    add.textContent = "أضف للكاتالوغ";
-    add.addEventListener("click", () => buildFromSubmission(sub));
-    const skipBtn = document.createElement("button");
-    skipBtn.type = "button";
-    skipBtn.className = "ghost";
-    skipBtn.textContent = "تخطي";
-    skipBtn.addEventListener("click", async () => {
-      await j("/api/submissions/status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: [sub.id], status: "skipped" }),
-      });
-      await loadSubs(true);
-      await loadSuppliers();
-    });
-    actions.append(add, skipBtn);
-    row.append(copy, actions);
-    box.append(row);
-  }
-  $("subs-more").hidden = subs.length >= subsTotal;
-}
-
-function buildFromSubmission(sub) {
-  const supp = supplierById(sub.supplier_id);
-  resetEditorState();
-  pendingSubmissionIds = [sub.id];
-  pendingSupplierId = sub.supplier_id;
-  selected.clear();
-  renderSelection();
-  setNote("");
-  selImages = sub.image ? [sub.image] : [];
-  const phones = supp?.whatsapp ? [supp.whatsapp] : [];
-  emptyEl.hidden = true;
-  editor.hidden = false;
-  $("post-text").textContent = sub.text || "(بلا نص)";
-  $("post-phone").hidden = phones.length === 0;
-  $("post-phone").textContent = phones.length ? `واتساب المورّد: ${phones.join("، ")}` : "";
-  $("f-name").value = suggestedName(sub.text || "");
-  $("f-price").value = "";
-  $("f-por").checked = false;
-  $("f-stock").value = "";
-  $("f-moq").value = "";
-  $("f-desc").value = "";
-  specs = [];
-  renderSpecs();
-  $("source").textContent = supp?.channel_title || supp?.name || "";
-  formError.hidden = true;
-  $("picker").hidden = true;
-  renderSelImages();
-  renderContact(phones);
-  switchTab("posts");
-  editor.scrollIntoView({ behavior: "smooth", block: "start" });
-  $("f-name").focus();
-}
-
-async function refreshSupplierDetail() {
-  if (!selectedSupplierId) return;
-  selectedSupplierDetail = await j(`/api/suppliers/${selectedSupplierId}/detail`);
-  renderSupplierDetail();
-  await loadSuppliers();
-}
-
-$("supp-q").addEventListener("input", renderSuppliers);
-$("supp-billing-filter").addEventListener("change", renderSuppliers);
-$("channel-link-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!selectedSupplierId) return;
-  const error = $("channel-link-error");
-  error.hidden = true;
-  const submit = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
-  submit.disabled = true;
-  try {
-    await j(`/api/suppliers/${selectedSupplierId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        channel_id: $("link-channel-id").value.trim(),
-        channel_title: $("link-channel-title").value.trim(),
-        channel_slug: $("link-channel-slug").value.trim().toLowerCase(),
-      }),
-    });
-    await Promise.all([refreshSupplierDetail(), loadChannels()]);
-  } catch (err) {
-    error.hidden = false;
-    error.textContent = err.message || "تعذر ربط القناة";
-  } finally {
-    submit.disabled = false;
-  }
-});
-$("supplier-detail-back").addEventListener("click", () => {
-  selectedSupplierId = null;
-  selectedSupplierDetail = null;
-  $("supplier-detail").hidden = true;
-  $("supplier-directory").hidden = false;
-});
-$("b-period-start").addEventListener("change", () => {
-  if (!$("b-period-end").value) $("b-period-end").value = cycleEnd($("b-period-start").value, $("b-cycle").value);
-});
-$("b-cycle").addEventListener("change", () => {
-  if ($("b-period-start").value) $("b-period-end").value = cycleEnd($("b-period-start").value, $("b-cycle").value);
-});
-$("pay-period-start").addEventListener("change", () => {
-  const cycle = selectedSupplierDetail?.subscription?.billing_cycle || "monthly";
-  $("pay-period-end").value = cycleEnd($("pay-period-start").value, cycle);
-  $("pay-next-due").value = $("pay-period-end").value;
-});
-
-$("subscription-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const error = $("b-error");
-  error.hidden = true;
-  const amountMinor = dirhamToMinor($("b-amount").value);
-  if (!Number.isInteger(amountMinor) || amountMinor < 0) {
-    error.hidden = false;
-    error.textContent = "دخل مبلغ صحيح";
-    return;
-  }
-  try {
-    await j(`/api/suppliers/${selectedSupplierId}/subscription`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        plan_name: $("b-plan").value.trim(),
-        amount_minor: amountMinor,
-        currency: "MAD",
-        billing_cycle: $("b-cycle").value,
-        status: $("b-status").value,
-        period_start: $("b-period-start").value,
-        period_end: $("b-period-end").value,
-        next_due_at: $("b-next-due").value,
-        grace_days: Number($("b-grace").value),
-        trial_ends_at: $("b-trial-end").value,
-        next_follow_up_at: $("b-follow-up").value,
-        internal_note: $("b-note").value.trim(),
-      }),
-    });
-    await refreshSupplierDetail();
-  } catch (err) {
-    if (err.message === "auth") return;
-    error.hidden = false;
-    error.textContent = err.message || "تعذر حفظ الاشتراك";
-  }
-});
-
-$("payment-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const error = $("pay-error");
-  error.hidden = true;
-  const amountMinor = dirhamToMinor($("pay-amount").value);
-  if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
-    error.hidden = false;
-    error.textContent = "دخل مبلغ الأداء";
-    return;
-  }
-  try {
-    await j(`/api/suppliers/${selectedSupplierId}/payments`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        amount_minor: amountMinor,
-        currency: "MAD",
-        paid_at: $("pay-date").value,
-        method: $("pay-method").value,
-        external_reference: $("pay-reference").value.trim(),
-        note: $("pay-note").value.trim(),
-        period_start: $("pay-period-start").value,
-        period_end: $("pay-period-end").value,
-        next_due_at: $("pay-next-due").value,
-      }),
-    });
-    await refreshSupplierDetail();
-  } catch (err) {
-    if (err.message === "auth") return;
-    error.hidden = false;
-    error.textContent = err.message || "تعذر تسجيل الأداء";
-  }
-});
-
-$("timeline-note-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const error = $("timeline-error");
-  error.hidden = true;
-  const text = $("timeline-note").value.trim();
-  if (!text) return;
-  try {
-    await j(`/api/suppliers/${selectedSupplierId}/notes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    $("timeline-note").value = "";
-    await refreshSupplierDetail();
-  } catch (err) {
-    if (err.message === "auth") return;
-    error.hidden = false;
-    error.textContent = err.message || "تعذر تسجيل الملاحظة";
-  }
-});
-
-$("supplier-revoke").addEventListener("click", async () => {
-  if (!selectedSupplierId || !confirm("واش باغي تسد جميع جلسات دخول هاد المورّد؟")) return;
-  try {
-    const result = await j(`/api/suppliers/${selectedSupplierId}/revoke-sessions`, { method: "POST" });
-    await refreshSupplierDetail();
-    setNote(`تسدات ${result.revoked || 0} جلسات دخول`);
-  } catch (err) {
-    if (err.message !== "auth") setNote(err.message || "تعذر إغلاق الجلسات");
-  }
-});
-
-$("tab-posts").addEventListener("click", () => switchTab("posts"));
-$("tab-products").addEventListener("click", () => switchTab("products"));
-$("tab-subs").addEventListener("click", () => switchTab("subs"));
-$("tab-supp").addEventListener("click", () => switchTab("supp"));
-$("pub-supplier").addEventListener("change", () => loadPublished().catch((e) => setNote(e.message)));
+$("subs-refresh").addEventListener("click", () => loadSubs(true).catch((e) => toast(e.message, true)));
+$("sub-status").addEventListener("change", () => loadSubs(true).catch((e) => toast(e.message, true)));
+$("sub-supplier").addEventListener("change", () => loadSubs(true).catch((e) => toast(e.message, true)));
+$("subs-more").addEventListener("click", () => loadSubs(false).catch((e) => toast(e.message, true)));
+$("pub-supplier").addEventListener("change", () => loadPublished().catch((e) => toast(e.message, true)));
 $("pub-q").addEventListener("input", () => {
   clearTimeout(queryTimer);
-  queryTimer = setTimeout(() => loadPublished().catch((e) => setNote(e.message)), 250);
-});
-$("subs-refresh").addEventListener("click", () => loadSubs(true).catch((e) => setNote(e.message)));
-$("sub-status").addEventListener("change", () => loadSubs(true).catch((e) => setNote(e.message)));
-$("sub-supplier").addEventListener("change", () => loadSubs(true).catch((e) => setNote(e.message)));
-$("subs-more").addEventListener("click", () => loadSubs(false).catch((e) => setNote(e.message)));
-$("supp-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const err = $("supp-error");
-  err.hidden = true;
-  try {
-    await j("/api/suppliers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: $("s-name").value.trim(),
-        whatsapp: $("s-whatsapp").value.trim(),
-        channel_slug: $("s-slug").value.trim().toLowerCase(),
-        telegram_id: $("s-tg").value.trim(),
-        status: "pending",
-      }),
-    });
-    $("s-name").value = "";
-    $("s-whatsapp").value = "";
-    $("s-slug").value = "";
-    $("s-tg").value = "";
-    await loadSuppliers();
-    await loadChannels();
-  } catch (e) {
-    if (e.message === "auth") return;
-    err.hidden = false;
-    err.textContent = e.message || "تعذر إضافة المورّد";
-  }
+  queryTimer = setTimeout(() => loadPublished().catch((e) => toast(e.message, true)), 250);
 });
 $("m-add").addEventListener("click", async () => {
   const err = $("m-error");
@@ -1287,23 +1524,33 @@ $("m-add").addEventListener("click", async () => {
     });
     $("m-text").value = "";
     $("m-image").value = "";
+    toast("Submission added");
     await loadSubs(true);
     await loadSuppliers();
   } catch (e) {
     if (e.message === "auth") return;
     err.hidden = false;
-    err.textContent = e.message || "تعذر الإضافة";
+    err.textContent = e.message || "Could not add";
   }
 });
+
+async function fillCategories() {
+  const categories = await j("/api/categories");
+  const select = $("f-category");
+  select.replaceChildren(new Option("— Select —", ""));
+  for (const name of categories) select.append(new Option(name, name));
+}
+
+async function refreshAll() {
+  await loadSuppliers();
+  await Promise.all([loadStats(), loadPayments(), loadChannels(), loadPublished(), loadPosts(true), loadSubs(true)]);
+}
 
 try {
   cfg = await j("/api/config");
   await fillCategories();
-  await loadChannels();
-  await loadPublished();
-  await loadPosts(true);
-  await loadSuppliers();
-  await loadSubs(true);
+  await refreshAll();
+  go("overview");
 } catch (err) {
-  if (err.message !== "auth") setNote(err.message || "تعذر التحميل");
+  if (err.message !== "auth") setNote(err.message || "Could not load");
 }

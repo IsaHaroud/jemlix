@@ -87,6 +87,21 @@ const STR = {
     contactTg: "تواصل عبر تيليغرام",
     stores: "المتاجر",
     priceOnRequest: "السعر عند الطلب",
+    sort: "ترتيب",
+    sortNewest: "الأحدث",
+    sortOldest: "الأقدم",
+    sortPriceAsc: "السعر: من الأقل",
+    sortPriceDesc: "السعر: من الأعلى",
+    sortName: "الاسم",
+    minPrice: "أدنى سعر",
+    maxPrice: "أقصى سعر",
+    resetFilters: "مسح التصفية",
+    priceTiers: "أسعار الكمية",
+    tierQty: "الكمية",
+    tierPrice: "سعر الوحدة",
+    tierMin: "من (قطعة)",
+    tierMax: "إلى (فارغ = بدون حد)",
+    addTier: "إضافة شريحة سعر",
     notFound: "هذا المنتج غير موجود.",
     about: "من نحن",
     blog: "المدونة",
@@ -130,6 +145,21 @@ const STR = {
     contactTg: "Contacter via Telegram",
     stores: "Boutiques",
     priceOnRequest: "Prix sur demande",
+    sort: "Trier",
+    sortNewest: "Plus récents",
+    sortOldest: "Plus anciens",
+    sortPriceAsc: "Prix croissant",
+    sortPriceDesc: "Prix décroissant",
+    sortName: "Nom",
+    minPrice: "Prix min",
+    maxPrice: "Prix max",
+    resetFilters: "Réinitialiser",
+    priceTiers: "Prix dégressifs",
+    tierQty: "Quantité",
+    tierPrice: "Prix unitaire",
+    tierMin: "De (pièces)",
+    tierMax: "À (vide = illimité)",
+    addTier: "Ajouter une tranche",
     notFound: "Produit introuvable.",
     about: "À propos",
     blog: "Blog",
@@ -224,9 +254,13 @@ export function initLang() {
   const menuButton = document.querySelector(".menu-toggle");
   const menu = document.getElementById("site-nav");
   if (menuButton && menu) {
-    const closeMenu = () => menuButton.setAttribute("aria-expanded", "false");
+    const setMenuOpen = (open) => {
+      menuButton.setAttribute("aria-expanded", String(open));
+      document.body.classList.toggle("menu-open", open);
+    };
+    const closeMenu = () => setMenuOpen(false);
     menuButton.addEventListener("click", () => {
-      menuButton.setAttribute("aria-expanded", String(menuButton.getAttribute("aria-expanded") !== "true"));
+      setMenuOpen(menuButton.getAttribute("aria-expanded") !== "true");
     });
     document.addEventListener("click", (event) => {
       if (!menuButton.contains(event.target) && !menu.contains(event.target)) closeMenu();
