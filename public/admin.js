@@ -365,8 +365,8 @@ function renderPublished(list) {
     const meta = document.createElement("div");
     meta.className = "muted";
     const tierCount = Array.isArray(product.price_tiers) ? product.price_tiers.length : 0;
-    const bits = [product.category, priceLabel(product.price, "MAD", product.price_on_request ? "Price on request" : ""), product.source_channel].filter(Boolean);
-    if (tierCount) bits.push(`${tierCount} price tiers`);
+    const bits = [product.category, product.price_on_request ? "Price on request" : priceLabel(product.price, "MAD"), product.source_channel].filter(Boolean);
+    if (tierCount && !product.price_on_request) bits.push(`${tierCount} price tiers`);
     if (!isSubstantialName(product.name)) bits.push("weak name");
     if (!product.published) bits.push("draft");
     meta.textContent = bits.join(" · ");

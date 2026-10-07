@@ -41,10 +41,11 @@
       <div>
         <p class="eyebrow" data-sp="yourProducts">منتجاتك</p>
         <h1 id="supplier-store-name" data-sp="store">المتجر</h1>
-        <p id="supplier-summary" class="muted"></p>
       </div>
       <a id="supplier-store-link" class="ghost supplier-store-link" href="/" target="_blank" rel="noopener noreferrer" data-sp="viewStore" hidden>عرض المتجر ↗</a>
     </div>
+
+    <div id="supplier-stats" class="supplier-stats" role="group" aria-label="حالة المنتجات"></div>
 
     <div class="supplier-toolbar">
       <label class="supplier-search">
@@ -95,6 +96,7 @@
         <span data-sp="tiers">أسعار الكمية</span>
         <div id="supplier-edit-tiers"></div>
         <button id="supplier-edit-add-tier" type="button" class="ghost small" data-sp="addTier">إضافة شريحة</button>
+        <p id="supplier-tier-hint" class="muted" data-sp="tierHint" hidden>عند اختيار السعر عند الطلب، لن تُعرض أسعار الكمية.</p>
       </div>
       <label class="stack span-2"><span data-sp="description">الوصف</span>
         <textarea id="supplier-edit-desc" rows="5"></textarea>

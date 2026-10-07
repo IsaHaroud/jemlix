@@ -81,8 +81,8 @@ function renderTiers() {
   const tiers = Array.isArray(product?.price_tiers) ? product.price_tiers : [];
   const section = $("g-tiers");
   if (!section) return;
-  section.hidden = tiers.length === 0;
-  if (!tiers.length) return;
+  section.hidden = tiers.length === 0 || !!product?.price_on_request;
+  if (section.hidden) return;
   $("g-tiers-table").innerHTML = tiers
     .map((tier) => `<tr><td>${escapeHtml(tierQtyLabel(tier))}</td><td>${escapeHtml(priceLabel(tier.price, t("currency")))}</td></tr>`)
     .join("");
@@ -101,9 +101,9 @@ function render() {
   if (crumb) crumb.textContent = title;
   renderChannel();
   const tiers = Array.isArray(product.price_tiers) ? product.price_tiers : [];
-  const price = tiers.length
+  const price = product.price_on_request ? t("priceOnRequest") : tiers.length
     ? tierRangeLabel(tiers, t("currency"))
-    : priceLabel(product.price, t("currency"), product.price_on_request ? t("priceOnRequest") : "");
+    : priceLabel(product.price, t("currency"));
   $("g-price").textContent = price;
   $("g-price").hidden = !price;
   $("g-moq").textContent = product.moq || "";

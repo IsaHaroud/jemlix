@@ -61,6 +61,7 @@ function firstNumber(value) {
 
 // All unit-price numbers on a product: base price + every tier price.
 export function priceNumbers(product) {
+  if (product.price_on_request) return [];
   const out = [];
   const base = firstNumber(product.price);
   if (base !== null) out.push(base);

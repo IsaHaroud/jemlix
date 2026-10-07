@@ -15,6 +15,7 @@ let cats = [];
 let channels = [];
 let activeCat = "";
 let sortMode = "newest";
+let loadFailed = false;
 
 const sortSel = document.getElementById("sort");
 const minPriceEl = document.getElementById("min-price");
@@ -64,8 +65,7 @@ function visible() {
     if (priceFiltered) {
       const nums = priceNumbers(product);
       if (!nums.length) return false;
-      if (min !== null && !nums.some((n) => n >= min)) return false;
-      if (max !== null && !nums.some((n) => n <= max)) return false;
+      if (!nums.some((n) => (min === null || n >= min) && (max === null || n <= max))) return false;
     }
     return true;
   });
@@ -120,9 +120,9 @@ function priceNum(product) {
 function cardHtml(product) {
   const file = product.images?.[0];
   const tiers = Array.isArray(product.price_tiers) ? product.price_tiers : [];
-  const price = tiers.length
+  const price = product.price_on_request ? t("priceOnRequest") : tiers.length
     ? tierRangeLabel(tiers, t("currency"))
-    : priceLabel(product.price, t("currency"), product.price_on_request ? t("priceOnRequest") : "");
+    : priceLabel(product.price, t("currency"));
   const contact = contactOf(product);
   const alt = escapeHtml(displayName(product.name));
   return `
@@ -180,17 +180,20 @@ function renderSkeletons(n = 10) {
 
 function renderCards() {
   const list = visible();
+  loadFailed = false;
   countEl.textContent = countLabel(list.length);
+  const filtering = !!search.value.trim() || !!activeCat || minPriceEl.value !== "" || maxPriceEl.value !== "";
+  countEl.hidden = !!storeSlug() && !filtering;
   none.hidden = list.length > 0;
   if (!list.length) {
     // Restore the filter-empty copy (a load error may have overwritten it).
     const strong = none.querySelector("strong");
     if (strong) strong.textContent = t("empty");
     const sub = none.querySelector("p");
-    if (sub) sub.textContent = t("emptySub");
+    if (sub) sub.textContent = filtering ? t("emptySub") : "";
     const btn = none.querySelector("button");
     if (btn) {
-      btn.hidden = false;
+      btn.hidden = !filtering;
       btn.textContent = t("retrySearch");
     }
   }
@@ -245,7 +248,7 @@ function renderCats(categories) {
   for (const product of products) {
     counts.set(product.category, (counts.get(product.category) || 0) + 1);
   }
-  const items = [{ label: t("allCats"), value: "" }, ...cats.map((name) => ({ label: catLabel(name), value: name }))];
+  const items = [{ label: t("allCats"), value: "" }, ...cats.filter((name) => counts.get(name)).map((name) => ({ label: catLabel(name), value: name }))];
   catsEl.innerHTML = items.map(chipHtml).join("");
   categoriesGrid.innerHTML = items.map((item) => categoryOptionHtml(item, counts)).join("");
 }
@@ -292,12 +295,6 @@ function renderToolbar() {
       input.name = "sort";
       input.value = mode;
       input.checked = mode === current;
-      input.addEventListener("change", () => {
-        sortMode = mode;
-        sortSel.value = mode;
-        syncTriggerState();
-        renderCards();
-      });
       const span = document.createElement("span");
       span.textContent = sortLabel(mode);
       label.append(input, span);
@@ -327,39 +324,36 @@ function resetFilters() {
 
 // ---- events ----
 search.addEventListener("input", renderCards);
-sortSel.addEventListener("change", () => {
-  sortMode = sortSel.value;
-  renderCards();
-});
 minPriceEl.addEventListener("input", () => { syncTriggerState(); renderCards(); });
 maxPriceEl.addEventListener("input", () => { syncTriggerState(); renderCards(); });
 document.getElementById("reset-filters").addEventListener("click", resetFilters);
-document.getElementById("empty-reset").addEventListener("click", resetFilters);
+document.getElementById("empty-reset").addEventListener("click", () => loadFailed ? load() : resetFilters());
 
-// Bottom sheet (mobile): two-way mirrors of the toolbar controls.
+// Bottom sheet (mobile): keep changes local until the visitor applies them.
 sortSel.addEventListener("change", () => {
   sortMode = sortSel.value;
   renderToolbar();
   renderCards();
 });
-minPriceM.addEventListener("input", () => {
-  minPriceEl.value = minPriceM.value;
-  syncTriggerState();
-  renderCards();
-});
-maxPriceM.addEventListener("input", () => {
-  maxPriceEl.value = maxPriceM.value;
-  syncTriggerState();
-  renderCards();
-});
 filtersTrigger.addEventListener("click", () => {
   minPriceM.value = minPriceEl.value;
   maxPriceM.value = maxPriceEl.value;
+  sortOptionsEl.querySelector(`input[value="${sortMode}"]`).checked = true;
   filtersDialog.showModal();
 });
 document.getElementById("filters-close").addEventListener("click", () => filtersDialog.close());
-document.getElementById("filters-apply").addEventListener("click", () => filtersDialog.close());
-document.getElementById("filters-reset").addEventListener("click", resetFilters);
+document.getElementById("filters-apply").addEventListener("click", () => {
+  sortMode = sortOptionsEl.querySelector('input[name="sort"]:checked')?.value || "newest";
+  minPriceEl.value = minPriceM.value;
+  maxPriceEl.value = maxPriceM.value;
+  renderToolbar();
+  renderCards();
+  filtersDialog.close();
+});
+document.getElementById("filters-reset").addEventListener("click", () => {
+  resetFilters();
+  filtersDialog.close();
+});
 filtersDialog.addEventListener("click", (event) => {
   if (event.target === filtersDialog) filtersDialog.close();
 });
@@ -409,7 +403,10 @@ document.addEventListener("jemla:lang", () => {
   syncCatalogMeta();
   renderCats(cats);
   renderToolbar();
-  renderCards();
+  if (loadFailed) {
+    none.querySelector("strong").textContent = t("loadError");
+    none.querySelector("button").textContent = t("retryLoad");
+  } else renderCards();
   renderStores();
   updateStoreSub();
 });
@@ -421,13 +418,14 @@ function storeSlug() {
 }
 
 function updateStoreSub() {
-  if (!storeSlug() || !products.length) return;
+  if (!storeSlug()) return;
   const el = document.getElementById("store-sub");
   if (el) el.textContent = countLabel(products.length);
 }
 
 async function load() {
   renderSkeletons();
+  none.hidden = true;
   try {
     const slug = storeSlug();
     const storeEl = document.getElementById("store");
@@ -438,6 +436,8 @@ async function load() {
       if (!storeRes.ok) throw new Error("store");
       const store = await storeRes.json();
       storeEl.hidden = false;
+      document.body.classList.add("store-page");
+      document.querySelector(".hero").hidden = true;
       storeNameEl.textContent = store.name;
       const ava = document.getElementById("store-ava");
       if (ava) ava.textContent = (store.name || "J").trim().charAt(0);
@@ -445,6 +445,8 @@ async function load() {
       productUrl = `/api/products?channel=${encodeURIComponent(store.name)}`;
     } else {
       storeEl.hidden = true;
+      document.body.classList.remove("store-page");
+      document.querySelector(".hero").hidden = false;
     }
     const [productRes, categoryRes, channelRes] = await Promise.all([fetch(productUrl), fetch("/api/categories"), fetch("/api/channels")]);
     if (!productRes.ok || !categoryRes.ok) throw new Error("load");
@@ -454,7 +456,10 @@ async function load() {
     updateStoreSub();
     if (channelRes?.ok) renderStores(await channelRes.json(), slug);
   } catch {
+    loadFailed = true;
+    grid.replaceChildren();
     countEl.textContent = "";
+    countEl.hidden = true;
     none.hidden = false;
     const strong = none.querySelector("strong");
     if (strong) {
@@ -462,7 +467,10 @@ async function load() {
       const sub = none.querySelector("p");
       if (sub) sub.textContent = "";
       const btn = none.querySelector("button");
-      if (btn) btn.hidden = true;
+      if (btn) {
+        btn.hidden = false;
+        btn.textContent = t("retryLoad");
+      }
     } else {
       none.textContent = t("loadError");
     }

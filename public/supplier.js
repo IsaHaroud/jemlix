@@ -13,6 +13,8 @@ const COPY = {
     minimum: "الحد الأدنى للطلب", description: "الوصف", visibleInCatalog: "ظاهر في الدليل", cancel: "إلغاء",
     tiers: "أسعار الكمية", addTier: "إضافة شريحة", tierFrom: "من (قطعة)", tierTo: "إلى (فارغ = ∞)",
     tierPrice: "سعر الوحدة", tiered: "أسعار كمية",
+    tierHint: "عند اختيار السعر عند الطلب، لن تُعرض أسعار الكمية.", viewProduct: "عرض المنتج ↗",
+    clearFilters: "مسح البحث والتصفية", noProductsYet: "لا توجد منتجات في متجرك بعد.",
     save: "حفظ التغييرات", supplier: "المورّد", noPrice: "دون سعر", minimumShort: "الحد الأدنى",
     noMinimum: "دون حد أدنى", noStock: "المخزون غير محدد", visible: "ظاهر", hidden: "مخفي", edit: "تعديل",
     noProducts: "لم نعثر على أي منتج", noProductsHelp: "غيّر البحث أو عامل التصفية ثم حاول مرة أخرى.",
@@ -30,6 +32,8 @@ const COPY = {
     minimum: "Minimum de commande", description: "Description", visibleInCatalog: "Visible dans le catalogue", cancel: "Annuler",
     tiers: "Prix dégressifs", addTier: "Ajouter une tranche", tierFrom: "De (pièces)", tierTo: "À (vide = ∞)",
     tierPrice: "Prix unitaire", tiered: "prix dégressifs",
+    tierHint: "Les prix dégressifs ne seront pas affichés avec le prix sur demande.", viewProduct: "Voir le produit ↗",
+    clearFilters: "Effacer la recherche et le filtre", noProductsYet: "Votre boutique ne contient pas encore de produits.",
     save: "Enregistrer", supplier: "Fournisseur", noPrice: "Sans prix", minimumShort: "Minimum",
     noMinimum: "Sans minimum", noStock: "Stock non défini", visible: "Visible", hidden: "Masqué", edit: "Modifier",
     noProducts: "Aucun produit trouvé", noProductsHelp: "Modifiez la recherche ou le filtre, puis réessayez.",
@@ -48,6 +52,7 @@ function translateSupplierPage() {
   for (const el of document.querySelectorAll("[data-sp-html]")) el.innerHTML = sp(el.dataset.spHtml);
   for (const el of document.querySelectorAll("[data-sp-ph]")) el.placeholder = sp(el.dataset.spPh);
   $("supplier-status").setAttribute("aria-label", sp("productStatus"));
+  $("supplier-stats").setAttribute("aria-label", sp("productStatus"));
   $("supplier-edit-close").setAttribute("aria-label", sp("close"));
 }
 
@@ -61,6 +66,7 @@ let offset = 0;
 let total = 0;
 let searchTimer = 0;
 let lastData = null;
+let loadSequence = 0;
 
 async function api(url, options) {
   const response = await fetch(url, options);
@@ -86,6 +92,7 @@ function setNote(message) {
 }
 
 function showLogin() {
+  loadSequence++;
   supplier = null;
   $("supplier-login").hidden = false;
   $("supplier-app").hidden = true;
@@ -133,25 +140,66 @@ function productRow(product) {
   title.textContent = displayName(product.name);
   title.dir = "auto";
   const meta = document.createElement("p");
-  meta.className = "muted";
+  meta.className = "supplier-product-details";
   const cur = getLang() === "fr" ? "MAD" : "د.م";
   const tiers = Array.isArray(product.price_tiers) ? product.price_tiers : [];
-  const price = tiers.length
+  const price = product.price_on_request ? sp("priceOnRequest") : tiers.length
     ? tierRangeLabel(tiers, cur)
-    : priceLabel(product.price, cur, product.price_on_request ? sp("priceOnRequest") : "");
-  meta.textContent = [price || sp("noPrice"), tiers.length ? sp("tiered") : null, product.moq ? `${sp("minimumShort")} ${product.moq}` : sp("noMinimum"), product.stock || sp("noStock")].filter(Boolean).join(" · ");
+    : priceLabel(product.price, cur);
+  const priceEl = document.createElement("strong");
+  priceEl.className = "supplier-product-price";
+  priceEl.textContent = price || sp("noPrice");
+  meta.textContent = [tiers.length && !product.price_on_request ? sp("tiered") : null, product.moq ? `${sp("minimumShort")} ${product.moq}` : sp("noMinimum"), product.stock || sp("noStock")].filter(Boolean).join(" · ");
   const status = document.createElement("span");
   status.className = `supplier-status ${product.published ? "active" : "hidden"}`;
   status.textContent = product.published ? sp("visible") : sp("hidden");
-  copy.append(title, meta, status);
+  const info = document.createElement("div");
+  info.className = "supplier-product-info";
+  info.append(priceEl, status);
+  copy.append(title, info, meta);
 
   const edit = document.createElement("button");
   edit.type = "button";
   edit.className = "ghost";
   edit.textContent = sp("edit");
   edit.addEventListener("click", () => openEditor(product));
-  row.append(image, copy, edit);
+  const actions = document.createElement("div");
+  actions.className = "supplier-product-actions";
+  if (product.published) {
+    const view = document.createElement("a");
+    view.className = "text-link";
+    view.href = `/p/${product.id}`;
+    view.target = "_blank";
+    view.rel = "noopener noreferrer";
+    view.textContent = sp("viewProduct");
+    actions.append(view);
+  }
+  actions.append(edit);
+  row.append(image, copy, actions);
   return row;
+}
+
+function renderStats(counts) {
+  const box = $("supplier-stats");
+  const status = $("supplier-status").value;
+  const items = [
+    ["all", sp("allProducts"), counts.all_count || 0],
+    ["active", sp("visibleProducts"), counts.active || 0],
+    ["hidden", sp("hiddenProducts"), counts.hidden || 0],
+  ];
+  box.replaceChildren(...items.map(([value, label, count]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "supplier-stat";
+    button.setAttribute("aria-pressed", String(status === value));
+    button.innerHTML = `<strong>${count}</strong><span></span>`;
+    button.querySelector("span").textContent = label;
+    button.addEventListener("click", () => {
+      $("supplier-status").value = value;
+      loadProducts(true);
+    });
+    return button;
+  }));
 }
 
 function renderProducts(data) {
@@ -166,16 +214,27 @@ function renderProducts(data) {
     const title = document.createElement("strong");
     title.textContent = sp("noProducts");
     const text = document.createElement("span");
-    text.textContent = sp("noProductsHelp");
+    const filtered = !!$("supplier-q").value.trim() || $("supplier-status").value !== "all";
+    text.textContent = filtered ? sp("noProductsHelp") : sp("noProductsYet");
     empty.append(title, text);
+    if (filtered) {
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "ghost small";
+      clear.textContent = sp("clearFilters");
+      clear.addEventListener("click", () => {
+        $("supplier-q").value = "";
+        $("supplier-status").value = "all";
+        loadProducts(true);
+      });
+      empty.append(clear);
+    }
     box.append(empty);
   } else {
     for (const product of products) box.append(productRow(product));
   }
   const counts = data.counts || {};
-  $("supplier-summary").textContent = getLang() === "fr"
-    ? `${counts.all_count || 0} produits · ${counts.active || 0} visibles · ${counts.hidden || 0} masqués`
-    : `${counts.all_count || 0} منتج · ${counts.active || 0} ظاهر · ${counts.hidden || 0} مخفي`;
+  renderStats(counts);
   const page = Math.floor(offset / PAGE_SIZE) + 1;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   $("supplier-page").textContent = getLang() === "fr" ? `Page ${page} sur ${pages}` : `الصفحة ${page} من ${pages}`;
@@ -186,6 +245,7 @@ function renderProducts(data) {
 
 async function loadProducts(reset = false) {
   if (reset) offset = 0;
+  const sequence = ++loadSequence;
   setNote("");
   const params = new URLSearchParams({
     q: $("supplier-q").value.trim(),
@@ -194,8 +254,11 @@ async function loadProducts(reset = false) {
     limit: String(PAGE_SIZE),
   });
   try {
-    renderProducts(await api(`/api/supplier/products?${params}`));
+    const data = await api(`/api/supplier/products?${params}`);
+    if (sequence !== loadSequence) return;
+    renderProducts(data);
   } catch (error) {
+    if (sequence !== loadSequence) return;
     if (error.status === 401) return showLogin();
     setNote(getLang() === "fr" ? sp("operationError") : error.message);
   }
@@ -209,12 +272,21 @@ function openEditor(product) {
   $("supplier-edit-name").dir = "auto";
   $("supplier-edit-price").value = product.price || "";
   $("supplier-edit-por").checked = !!product.price_on_request;
+  updatePriceMode();
   $("supplier-edit-stock").value = product.stock || "";
   $("supplier-edit-moq").value = product.moq || "";
   $("supplier-edit-desc").value = product.description || "";
   $("supplier-edit-published").checked = !!product.published;
   $("supplier-edit-error").hidden = true;
   $("supplier-editor").showModal();
+}
+
+function updatePriceMode() {
+  const onRequest = $("supplier-edit-por").checked;
+  $("supplier-edit-price").disabled = onRequest;
+  $("supplier-edit-add-tier").disabled = onRequest;
+  $("supplier-edit-tiers").hidden = onRequest;
+  $("supplier-tier-hint").hidden = !onRequest;
 }
 
 function closeEditor() {
@@ -307,6 +379,7 @@ $("supplier-next").addEventListener("click", () => {
 
 $("supplier-edit-close").addEventListener("click", closeEditor);
 $("supplier-edit-cancel").addEventListener("click", closeEditor);
+$("supplier-edit-por").addEventListener("change", updatePriceMode);
 $("supplier-edit-add-tier").addEventListener("click", () => {
   editTiers.push({ min_qty: "", max_qty: null, price: "" });
   renderEditTiers();
@@ -326,9 +399,9 @@ $("supplier-edit-form").addEventListener("submit", async (event) => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        price: $("supplier-edit-price").value.trim(),
+        price: $("supplier-edit-por").checked ? "" : $("supplier-edit-price").value.trim(),
         price_on_request: $("supplier-edit-por").checked,
-        price_tiers: editTiers,
+        price_tiers: $("supplier-edit-por").checked ? [] : editTiers,
         stock: $("supplier-edit-stock").value.trim(),
         moq: $("supplier-edit-moq").value.trim(),
         description: $("supplier-edit-desc").value.trim(),
