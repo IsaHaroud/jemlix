@@ -737,13 +737,17 @@ function suggestSlug(name) {
     .replace(/^-|-$/g, "").slice(0, 60);
 }
 
+function suppLabel(s) {
+  return s.name ? `${s.name} (#${s.id})` : `#${s.id}`;
+}
+
 async function loadSuppliers() {
   suppliers = await j("/api/suppliers");
   renderSuppliers();
   const curQ = supplierEl.value;
   supplierEl.replaceChildren(
     new Option("Select supplier", ""),
-    ...suppliers.map((s) => new Option(`${s.name || `#${s.id}`} · ${s.status}`, String(s.id))),
+    ...suppliers.map((s) => new Option(`${suppLabel(s)} · ${s.status}`, String(s.id))),
     new Option("Unlinked (legacy)", "unlinked"),
   );
   if ([...supplierEl.options].some((o) => o.value === curQ)) supplierEl.value = curQ;
@@ -751,16 +755,16 @@ async function loadSuppliers() {
   const subCur = subSel.value;
   subSel.replaceChildren(
     new Option("All suppliers", ""),
-    ...suppliers.map((s) => new Option(s.name || `#${s.id}`, String(s.id))),
+    ...suppliers.map((s) => new Option(suppLabel(s), String(s.id))),
   );
   if ([...subSel.options].some((o) => o.value === subCur)) subSel.value = subCur;
   const m = $("m-supplier");
-  m.replaceChildren(...suppliers.map((s) => new Option(s.name || `#${s.id}`, String(s.id))));
+  m.replaceChildren(...suppliers.map((s) => new Option(suppLabel(s), String(s.id))));
   const pub = $("pub-supplier");
   const pubCur = pub.value;
   pub.replaceChildren(
     new Option("All suppliers", ""),
-    ...suppliers.map((s) => new Option(s.name || `#${s.id}`, String(s.id))),
+    ...suppliers.map((s) => new Option(suppLabel(s), String(s.id))),
     new Option("Unlinked (legacy)", "unlinked"),
   );
   if ([...pub.options].some((o) => o.value === pubCur)) pub.value = pubCur;
@@ -787,7 +791,7 @@ function renderSuppliers() {
     });
     const name = document.createElement("td");
     const strong = document.createElement("div");
-    strong.innerHTML = `<strong>${esc(s.name || `#${s.id}`)}</strong>`;
+    strong.innerHTML = `<strong>${esc(s.name || "(no name)")}</strong> <span class="muted mono">#${s.id}</span>`;
     const sub = document.createElement("div");
     sub.className = "muted";
     sub.textContent = `${supplierStatusBadge(s.status).replace(/<[^>]+>/g, "")} · ${s.whatsapp || "no number"}`;
@@ -821,7 +825,11 @@ async function openSupplier(id) {
   const tg = s.telegram_id ? `<a class="mono" href="tg://user?id=${s.telegram_id}">${esc(String(s.telegram_id))}</a>` : "—";
   $("drawer-body").innerHTML = `
     <div class="panel">
-      <h3>Profile</h3>
+      <div class="brand-row" style="margin-bottom:8px">
+        <h3 style="margin:0">Profile</h3>
+        <span class="grow" style="flex:1"></span>
+        <span class="badge b-gray mono">ID: #${s.id} · <code>--supplier ${s.id}</code></span>
+      </div>
       <div class="fields">
         <label class="stack">Name<input id="d-name" value="${esc(s.name || "")}"></label>
         <label class="stack">Username<input id="d-user" value="${esc(s.username || "")}" dir="ltr"></label>

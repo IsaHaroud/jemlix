@@ -1,355 +1,280 @@
-# Jemlix — supplier & product workflow
+# Jemlix — Supplier & Product Workflow
 
-Status: implementation ready for launch review 2026-09-30. Phases 1–3 are in
-code; bot polling is active only when `BOT_TOKEN` is set. Production deployment
-and a real-supplier pilot are not complete yet.
-Sprint 2026-09-29 done: public catalog shows active-supplier + legacy stores only;
-publish requires name/category/image/price-or-on-request/MOQ/supplier/contact (drafts exempt);
-PATCH /api/products/:id for edits; onboarding_step resumes after restarts;
-albums grouped via media_group_id with (supplier_id, tg_message_id) idempotency and
-posted/failed delivery status; imports upsert on (channel, msg_id) preserving status/links.
+Status: Live and operational (September / October 2026). Single Bun process running website, admin dashboard, supplier portal, and Telegram polling bot.
 
-## Principle
+---
 
-The bot is the supplier's **single place to post**. One message → the supplier's
-Telegram channel (the bot re-posts it) **and** your catalog review queue. The
-supplier never posts in two places. You curate. **No seller passwords or account setup.**
+## 1. The Jemlix Principle ("Zero Behavior Change")
 
-## Actors
+Moroccan wholesale suppliers (*grossistes* / تجار الجملة) in hubs like Derb Omar, Casablanca, or Inezgane rely on Telegram and WhatsApp. They will not adopt complex dashboards, remember passwords, or upload inventory twice.
 
-- **Supplier** — owns a Telegram channel, sells wholesale.
-- **Bot** — a Telegram bot you control. Admin of each supplier's channel.
-- **You (admin)** — the Jemlix dashboard (`/admin`). Reviews and publishes.
-- **Buyer** — browses the public catalog. No account.
+The core value proposition:
+> **"Keep posting in your Telegram channel exactly like you do today. Jemlix turns your channel into an organized, searchable web store link (`jemlix.com/c/<slug>`) that sells while you sleep, and syncs all your new posts automatically."**
 
-## Why this works
+- **Zero friction:** The supplier's channel remains theirs, their audience remains theirs.
+- **Archive monetization:** Products that get buried in chat scroll become permanently searchable by category, price, and MOQ.
+- **Direct contact:** Wholesale buyers order directly via WhatsApp or Telegram; Jemlix does not hold inventory or touch buyer payments.
 
-A bot cannot *read* a channel, but it **can post** to a channel it administers.
-So instead of trying to read the supplier's channel, the bot becomes the
-*source*: the supplier sends products to the bot, and the bot publishes to the
-channel. No scraping, no user-session, no ban risk.
+---
 
-## Flows
+## 2. Actors & System Roles
 
-### A. Onboarding (once)
+| Actor | Channel / Interface | Role & Responsibilities |
+| :--- | :--- | :--- |
+| **Supplier** | Telegram Bot (`@JemlixBot`) + Mobile Browser (`/supplier`) | Owns wholesale channel. Sends products to bot in DM. Edits prices/stock via passwordless code. |
+| **Bot** | Telegram Bot API (`src/bot.ts`) | Admin of each supplier's channel. Immediate channel re-publisher, submission collector, and supplier notifier. |
+| **Admin (You)** | Jemlix Admin Dashboard (`/admin`) | Moderates incoming submissions, curates product listings, sets store slugs, manages CRM billing & offline payments. |
+| **Buyer** | Public Catalog (`/` and `/c/<slug>`) | Retailers, drop-shippers, and boutique owners. Searches products, views wholesale tiers/MOQ, contacts supplier directly. |
+
+---
+
+## 3. High-Level Lifecycle Map
 
 ```
-Supplier  /start  →  Bot asks: name?  whatsapp?
-                     Bot: "أضفني مديرا فالقناة ديالك" (add me as channel admin)
-Supplier adds bot as admin
-                     Bot receives my_chat_member → learns channel id + title
-                     Bot matches the exact Telegram user id → links supplier
-You   → dashboard → review supplier → set store slug + contact → active
+┌────────────────────────────────────────────────────────────────────────┐
+│                          OVERALL LIFECYCLE                             │
+└────────────────────────────────────────────────────────────────────────┘
+
+ 1. Pitch & Offer ──► 2. Bot Onboarding ──► 3. Telegram Desktop Export 
+                                                         │
+ 6. Supplier Portal ◄── 5. Ongoing Sync ◄── 4. Import & Curation
+     (/code web)         (DM Bot ─► Channel)     (Admin Queue ─► Live Store)
 ```
 
-The supplier record is created during `/start`, before channel linking. Pending
-status is not used for matching: every supplier has a unique Telegram user ID,
-and `my_chat_member.from.id` identifies the exact person who promoted the bot.
-This stays unambiguous even when many suppliers are pending.
+---
 
-A forwarded channel post uses the current Bot API `forward_origin` field (with
-legacy `forward_from_chat` support) to **suggest** a channel. It does not prove
-ownership because anyone can forward a public post. The link becomes confirmed
-only after the same registered Telegram account adds the bot as channel admin.
-If another administrator performs that action, Jemlix leaves the link unconfirmed
-for manual review. An existing supplier link cannot be silently replaced, and a
-channel already claimed by another supplier is rejected.
+## 4. End-to-End Operational Flows
 
-### B. Existing catalog (once per supplier)
+### Flow A: Pitch, Pricing & Commercial Agreement (The "Heavy Work" Setup)
 
-```
-You  → Telegram Desktop → export the supplier's channel
-You  → copy the export to the Jemlix machine/VPS
-You  → run the CLI importer with the exact supplier id (`--supplier <id>`)
-You  → structure products (existing curation) → publish
-Store live: /c/<slug>  →  Bot messages the supplier their link
-```
+1. **Offer Structures:**
+   * **Pilot / Trial:** First 60–100 products structured for free, 14-day trial period.
+   * **Catalog Build (Heavy Work):** Upfront per-product estimate (e.g., 200 products estimated × 2 MAD = 400 MAD build fee).
+   * **Ongoing Maintenance:** Proposed ~99 MAD/month (covers hosting, bot sync, catalog updates, and view analytics).
+2. **Upfront Payment Recording in Admin CRM:**
+   * Open **Admin (`/admin`) → Suppliers → Open Supplier Drawer**.
+   * Under **Catalog build (onboarding)**, record the upfront estimate before a subscription plan even exists.
+   * Payments are classified as `onboarding` vs. `subscription` so one-time build fees never distort recurring subscription period dates. Supported payment methods: `cash`, `bank`, `wafacash`, `cmi`, `other`.
 
-The importer is currently a command-line operation, not a dashboard upload.
-Once production lives on the VPS, importing on the laptop would update only the
-laptop's database. Upload the untouched Telegram export folder to the VPS and
-run the dry run and real import there. See `DEPLOYMENT.md` for the exact commands.
+---
 
-### C. New products (ongoing) — the core loop
+### Flow B: Supplier Onboarding & Channel Linking
+
+The supplier links their store identity without creating passwords or entering credentials:
 
 ```
-Supplier  DMs the bot a product (photo + caption)
-   Bot → posts it to the supplier's channel   (looks like their normal post)
-   Bot → saves it as a submission (status=new) → notifies you
-You  → dashboard → المرسلات → review → "أضف للكاتالوغ" (reuse curation, prefilled)
-   published → appears on /c/<slug> and the main catalog
+Supplier                  Telegram Bot (@JemlixBot)              Admin Dashboard
+   │                                  │                                │
+   ├────────── /start ───────────────►│                                │
+   │◄── "شنو سميتك؟" ─────────────────┤                                │
+   ├───── Shop Name (e.g. محل سعيد) ──►│ (Saves pending supplier)       │
+   │◄── "صيفط رقم الواتساب" ──────────┤                                │
+   ├───── WhatsApp (0612345678) ─────►│                                │
+   │                                  ├──── Admin Notification ───────►│ ("New supplier pending...")
+   │◄── "أضفني مديرا فالقناة ديالك" ──┤                                │
+   │    (Add bot as channel admin)    │                                │
+   │                                  │                                │
+   ▼ (Promotes Bot in Channel)        │                                │
+[Telegram: my_chat_member] ──────────►│ (Matches user ID,              │
+                                      │  locks channel_id)             │
+                                      ├──── Admin Notification ───────►│ ("Linked channel: ...")
+                                      │                                │
+                                      │                          Admin activates
+                                      │                          supplier & sets slug
+                                      │◄─── Store live notification ───┤
+   │◄── "تربطات القناة ✅" ───────────┤                                │
 ```
 
-### D. Supplier editing (passwordless code)
+* **Security Mechanism:** A bot cannot read a Telegram channel, but it **can post** to a channel it administers.
+* Channel linking is strictly validated against `my_chat_member.from.id`. The Telegram user who registered must be the one promoting the bot.
+* A channel already claimed by another supplier cannot be linked.
+* If onboarding is interrupted, the step survives server restarts in the database (`onboarding_step`) and resumes on their next message.
+
+---
+
+### Flow C: The "Heavy Work" (Telegram Desktop Export & Server CLI Import)
+
+Because the bot was not in the channel in the past, existing channel history must be imported in bulk:
+
+1. **Export from Telegram Desktop:**
+   * Open Telegram Desktop on your computer.
+   * Go to the supplier's channel → `⋮` (Menu) → **Export Chat History**.
+   * Uncheck videos/files; select **Photos** only.
+   * Set format to **JSON** (`result.json`).
+2. **Transfer to Server / VPS:**
+   ```bash
+   rsync -az --partial --progress \
+     /local/path/ChatExport/ \
+     root@jemlix.com:/var/lib/jemla-imports/supplier-12/
+   ```
+3. **Execute CLI Importer (`src/import.ts`):**
+   * Inspect message counts and photos with a dry run:
+     ```bash
+     sudo -iu jemla bash -lc 'cd /opt/jemla && bun run import:dry -- /var/lib/jemla-imports/supplier-12 --supplier 12'
+     ```
+   * Run the production import:
+     ```bash
+     sudo -iu jemla bash -lc 'cd /opt/jemla && bun run import -- /var/lib/jemla-imports/supplier-12 --supplier 12'
+     ```
+4. **Automated Pipeline during Import:**
+   * Generates optimized 480px WebP/JPEG thumbnails into `media/thumbs/` for instant mobile browsing.
+   * Extracts Moroccan phone numbers (`+212...` / `06...`) from post captions via regex.
+   * Performs an idempotent upsert on `(channel, msg_id)`: re-importing the same channel will refresh photos and text without reverting curated posts back to `new` or unlinking live products.
+
+---
+
+### Flow D: Admin Curation & Balance Reconciliation
+
+1. **Curate in Admin Queue (`/admin` → Queue):**
+   * Filter posts by the supplier's channel.
+   * Select one or more posts representing a single product (multi-photo grouping).
+   * Click **"Build product"** (`كوّن منتج`):
+     * Clean the title (strip emoji spam).
+     * Set Category, MOQ (Minimum Order Quantity), Wholesale Price (or "Price on request" / wholesale volume tiers), and Stock status.
+     * Click **Publish** (or Save Draft).
+2. **Reconcile Build Balance:**
+   * Open **Admin → Suppliers → Supplier Drawer**.
+   * The **Catalog build (onboarding)** panel displays live math:
+     $$\text{Exact} = \text{Published Products} \times \text{Rate (MAD)}$$
+   * Compares `Exact` against `Paid`. If estimated 400 MAD was paid and 180 products were published at 2 MAD (360 MAD), it shows settled with clear accounting. If extra is due, record the remaining balance with one click.
+
+---
+
+### Flow E: Day-to-Day Product Intake (The Ongoing Sync Loop)
+
+Once onboarded, the supplier never needs to use an admin dashboard to publish new inventory:
 
 ```
-Supplier  identified by Telegram ID (no password, no account)
-   /code           → one-time 6-digit code (10 minutes)
-   /supplier       → enter code → 7-day browser session
-   dashboard       → search/paginate all owned products
-                   → edit price / stock / MOQ / description / visibility
-   /logoutall      → revoke every browser session
+Supplier                          Telegram Bot                       Public Store
+   │                                   │                                  │
+   ├─ DMs photo(s) + caption ─────────►│                                  │
+   │  (e.g. 4 photos of a hoodie       │ 1. Buffers album (2.5s burst)    │
+   │   + "Prix 65 DH, Colis de 10")    │ 2. Saves images & thumbnails     │
+   │                                   │ 3. Posts directly to supplier's  │
+   │                                   │    Telegram Channel              │
+   │                                   │ 4. Creates Jemlix "Submission"   │
+   │                                   │                                  │
+   │◄─ "توصّلنا بـ 4 تصاور ✅          │                                  │
+   │    تسجلات كمنتج، غتراجع..." ──────┤                                  │
+   │                                   ├──── Notifies Admin ─────────────►│
+   │                                   │                                  │
+                                       ▼                                  │
+                          Admin reviews in /admin                         │
+                          Submissions ─► "Add to catalog"                 │
+                          & clicks Publish                                │
+                                       │                                  │
+   │◄─ "تم نشر منتجك: [اسم المنتج]" ───┴─────────────────────────────────►│ (Live at /c/slug)
 ```
 
-Telegram remains the identity and recovery mechanism; the product list stays in
-the web dashboard so suppliers with hundreds of products do not manage ids or
-long lists in chat. Codes are single-use, stored only as keyed hashes, and every
-product query is scoped by the authenticated `supplier_id`.
+* **Album Burst Buffering:** The bot collects multi-photo albums (`media_group_id`) over a 2.5-second buffer window and stores them as **one single submission** instead of individual fragmented posts.
+* **Immediate Channel Post:** The bot posts to the supplier's channel immediately, keeping their Telegram channel active with zero delay.
+* **Catalog Curation:** The product appears on `jemlix.com` only after admin review, ensuring catalog consistency and data quality.
+* When published, the bot sends an automated confirmation message to the supplier's Telegram chat.
 
-Admin dashboard keeps its existing `ADMIN_TOKEN` gate. That is separate from
-seller access and stays.
+---
 
-### E. Admin supplier relationship and billing record
+### Flow F: Supplier Passwordless Self-Service Portal (`/code`)
 
+Suppliers can adjust their own prices, update MOQ, or mark items out of stock without contacting you:
+
+1. Supplier sends `/code` to `@JemlixBot`.
+2. Bot replies with a one-time 6-digit code valid for 10 minutes:
+   > كود الدخول: `482910` — صالح لمدة 10 دقايق. دخلو هنا: jemlix.com/supplier
+3. Supplier opens `jemlix.com/supplier`, enters the 6 digits, and receives an HTTP-only authenticated cookie valid for 7 days.
+4. **Portal Capabilities (`public/supplier.html`):**
+   * Search and filter all their owned products.
+   * Update Price, Price on Request, and Wholesale Tiers.
+   * Edit MOQ and Stock notes (e.g. "متوفر" vs "بالطلب").
+   * Toggle visibility (Hide sold-out items / Show back in stock).
+5. **Revocation:** If a supplier loses their phone, sending `/logoutall` to the bot immediately revokes all active browser sessions.
+6. **Auditability:** All supplier edits are logged in `supplier_product_edits` and displayed in the Admin activity timeline.
+
+---
+
+### Flow G: Commercial Billing Lifecycle & Store Statuses (CRM Matrix)
+
+Subscription statuses in [`src/supplier-crm.ts`](file:///home/iharoud/Documents/GitHub/jemla/src/supplier-crm.ts) control both administrative tracking and public catalog visibility:
+
+| Subscription Phase | Trigger / Conditions | Admin Action | Public Store Visibility (`/c/<slug>`) |
+| :--- | :--- | :--- | :--- |
+| **`trial`** | Onboarding completed, 14-day trial active | Monitor usage & queue products | **Active & Live** |
+| **`trial_ending`** | $\le 7$ days before trial end | Outreach with view analytics | **Active & Live** |
+| **`trial_ended`** | Trial expired, no payment recorded | Contact for subscription decision | **Active & Live** until manually paused |
+| **`active`** | Paid monthly/quarterly subscription | Regular submission reviews | **Active & Live** |
+| **`due_soon`** | $\le 7$ days before next due date | Send invoice / reminder | **Active & Live** |
+| **`due_today`** | Due date reached | WhatsApp follow-up | **Active & Live** |
+| **`grace`** | Overdue but within grace window (e.g. 5 days) | Follow up on cash/transfer | **Active & Live** (prevents abrupt cutoff) |
+| **`overdue` / `paused`** | Grace period expired without payment | Set supplier status to `paused` | **Instantly Hidden** (Returns 404; products hidden) |
+| **`churned`** | Supplier permanently leaves | Archive records; leave channel | **Hidden** |
+
+> [!IMPORTANT]
+> Operational store status (`active` vs `paused`) is separated from billing phase (`trial`, `due_soon`, `grace`). A temporary payment delay never automatically disrupts a supplier's store until an administrative decision is made.
+
+---
+
+### Flow H: Buyer Discovery & Direct Ordering
+
+1. Buyers browse the mobile-first catalog (`jemlix.com` or direct store link `jemlix.com/c/<slug>`).
+2. Search by title, filter by category, view wholesale price tiers and Minimum Order Quantity (MOQ).
+3. Clicking **"تواصل مع البائع"** (Contact Supplier) opens WhatsApp or Telegram with the supplier with pre-filled product details.
+4. Daily store and product page views are recorded in SQLite and surfaced in the Admin Supplier Drawer to demonstrate real buyer demand during monthly renewal discussions.
+
+---
+
+## 5. Scenario & Edge Case Handling Matrix
+
+| Scenario | System Behavior & Fallback |
+| :--- | :--- |
+| **Supplier sends multi-photo album** | `src/bot.ts` groups messages by `media_group_id` using a 2.5s timer. Consolidates into one submission with all photos attached. |
+| **Supplier sends photos individually** | Bot accepts each photo, but automatically includes an educational Darija tip: *"باش تزيد تصاور لنفس المنتج، صيفطهم مجموعين فرسالة وحدة"*. |
+| **Bot removed as channel admin** | Channel posting fails safely; submission delivery status recorded as `failed`. Admin notified; supplier advised via bot to re-promote bot. |
+| **Interrupted registration** | Step is saved to SQLite (`onboarding_step`). When the supplier messages the bot hours or days later, it prompts for the missing detail (Name or WhatsApp). |
+| **Channel link mismatch / dispute** | Forwarded channel post creates an audit suggestion only. Final link requires promotion by the registered user or manual link verification in Admin. |
+| **Supplier requests custom URL slug** | Supplier runs `/setslug <name>` in bot. System validates slug format and uniqueness, saves as pending admin review. |
+| **Supplier stops paying subscription** | Admin sets supplier status to `paused`. Store `/c/<slug>` and all products disappear from public view immediately. Re-activating instantly restores them. |
+
+---
+
+## 6. Technical Architecture & Database
+
+Runs as a single lightweight Bun process:
 ```
-You  → الموردون → open the supplier file
-     → record the offer, amount, cycle, current period, next due date and grace
-     → record each external payment (cash/bank/Wafacash/CMI) with its reference
-     → schedule the next follow-up and add call/meeting notes
-Jemlix → calculates trial / due soon / due today / grace / overdue
-      → keeps an immutable payment ledger and a combined activity timeline
-```
-
-Jemlix does not collect or move money. Operational store status (`pending`,
-`active`, `paused`) remains separate from the commercial subscription status
-(`trial`, `active`, `paused`, `churned`), so a billing date never silently hides
-a supplier's products. Code generation, supplier login/logout, session revocation,
-product edits, agreement changes, payments and admin notes are auditable.
-
-## Data model (new tables)
-
-```sql
-suppliers (
-  id INTEGER PRIMARY KEY,
-  telegram_id INTEGER UNIQUE,      -- seller identity
-  name TEXT,
-  username TEXT,
-  whatsapp TEXT,
-  channel_id TEXT,                 -- -100... from my_chat_member
-  channel_title TEXT,
-  channel_slug TEXT,               -- links to channels.slug (the store URL)
-  status TEXT DEFAULT 'pending',   -- pending | active | paused
-  created_at TEXT
-);
-
-submissions (
-  id INTEGER PRIMARY KEY,
-  supplier_id INTEGER,
-  tg_message_id INTEGER,
-  text TEXT,
-  image TEXT,                      -- copied into media/
-  status TEXT DEFAULT 'new',       -- new | published | skipped
-  product_id INTEGER,
-  created_at TEXT
-);
-```
-
-Links: `suppliers.channel_slug` ↔ `channels.slug`.
-`submissions.product_id` ↔ `products.id`.
-`products.source_channel` already ties a product to a channel/store.
-
-The CRM adds `supplier_subscriptions` (one current agreement per supplier),
-`supplier_payments` (append-only external payment records), and `supplier_events`
-(the unified audit timeline). Money is stored in centimes as integer minor units.
-
-## Architecture
-
-One Bun process (same pattern as autowork):
-
-```
-src/index.ts   → HTTP server (catalog, admin API, media)   [exists]
-src/bot.ts     → grammY bot: polling + channel posting      [new]
-src/import.ts  → Telegram Desktop import (per supplier)     [exists, extend]
-src/db.ts      → + suppliers, submissions                   [extend]
-DB             → same SQLite (data/jemla.db)
-```
-
-Bot and server share the DB. Bot handles Telegram; server handles web.
-
-## Phases
-
-### Phase 1 — data model + dashboard (no bot)
-- Add `suppliers` + `submissions` tables
-- Admin tab **الموردون**: add supplier, set channel + slug + contact + status
-- Admin tab **المرسلات**: submissions queue (manual until the bot exists)
-- Import: `bun run import -- <export-folder> --supplier <id>`
-- *Done when:* you can add a supplier, import their channel, structure, publish,
-  and the store shows under their name at `/c/<slug>`.
-
-### Phase 2 — the bot
-- Add grammY; `src/bot.ts` runs in the same process
-- `/start` → collect name + whatsapp → ask them to add the bot as channel admin
-- `my_chat_member` → capture channel id/title → link to supplier
-- A product (photo+caption) from a linked supplier → **post to their channel** +
-  save a submission → notify you
-- `/mystore`, `/myproducts`, `/mylink` for the supplier
-- When you publish → notify the supplier
-- *Done when:* a supplier can onboard, send a product, see it in their channel,
-  and it appears in your المرسلات queue.
-
-### Phase 3 — glue
-- Submission → "كوّن منتج" prefilled (reuse curation)
-- Auto-associate submissions by `telegram_id`
-- Supplier status: pause → hide their store; active → show
-- Seller edits price/stock/MOQ/description/visibility in the passwordless web
-  portal opened with `/code`; bot edit commands redirect there.
-
-## Product decisions (current)
-
-1. **Channel publishing** — the supplier sends new products to the bot. The bot
-   posts them to the supplier channel and creates a Jemlix submission.
-2. **Moderation** — channel publishing is immediate; Jemlix catalog publication
-   waits for admin review.
-3. **Seller edits** — `/code` creates a one-time code for the web product portal.
-   No passwords and no long product lists inside Telegram.
-4. **Store slug** — the supplier may request one with `/setslug`; the admin
-   reviews it and remains responsible for the final public store URL.
-
-## Reality check
-
-The initial per-supplier Telegram Desktop export is manual and will not scale
-past a handful of suppliers. That is fine for the first 5–10. Automate with a
-scraper only after the loop is proven and worth it.
-
-## Launch workflow for review
-
-The immediate strategy is direct supplier outreach, not paid advertising. That
-is appropriate for the pilot because Jemlix still needs to learn the real cost
-of cleaning, grouping and maintaining Moroccan Telegram catalogs.
-
-### Gate 1 — identity and infrastructure
-
-- [x] Production domain purchased: `jemlix.com`.
-- [ ] Point the root and `www` DNS records to the Hetzner server.
-- [ ] Create `Jemlix | جملة` with the official `@BotFather` and save the token
-  only in the server environment.
-- [ ] Deploy to Hetzner with the app bound to `127.0.0.1:3001` behind Caddy.
-- [ ] HTTPS works and HTTP redirects to HTTPS.
-- [ ] Hetzner Firewall exposes only 80/443 publicly; SSH is restricted.
-- [ ] Hetzner deletion protection is enabled. Backups are deferred during the
-  disposable pilot and added before the catalog becomes difficult to recreate.
-- [ ] `ADMIN_TOKEN`, `BOT_TOKEN` and `SUPPLIER_AUTH_SECRET` are long, different
-  values and do not exist in Git.
-
-Detailed commands and rollback instructions are in `DEPLOYMENT.md`.
-
-### Gate 2 — private acceptance test
-
-Use your own Telegram account and a private channel. Test the complete path,
-not isolated screens:
-
-```
-/start → name → WhatsApp → add bot as channel admin
-        → admin activates supplier and assigns slug
-photo/caption to bot → supplier channel + Jemlix submissions
-        → admin reviews and publishes → public supplier store
-/code → supplier portal → edit price/stock/MOQ/visibility
-/logoutall → existing supplier sessions stop working
+src/index.ts   → HTTP Server (Public catalog, Admin API, Supplier Portal, Media server)
+src/bot.ts     → grammY Bot (Polling, channel publishing, DM intake, /code generator)
+src/import.ts  → CLI Importer (Telegram Desktop JSON import, thumbnail generator)
+src/db.ts      → SQLite with WAL mode (data/jemla.db)
 ```
 
-- [ ] Single photo works.
-- [ ] Multi-photo album works once, without duplicates.
-- [ ] A failed channel post is visible as failed in Admin.
-- [ ] Product publication requires the expected commercial fields.
-- [ ] Arabic and French public pages work on phone and desktop.
-- [ ] Admin and supplier sessions work only over HTTPS in production.
+### Key Tables:
+- `suppliers`: Registered Telegram sellers, WhatsApp contacts, linked channel ID, slug, and status (`pending`, `active`, `paused`).
+- `submissions`: Inbound products from Telegram DMs, image arrays, delivery status (`posted`, `failed`), and approval link to `products.id`.
+- `products`: Catalog items with wholesale prices, tiers, MOQ, categories, stock status, and channel associations.
+- `posts`: Raw imported posts from Telegram Desktop exports, keyed by `(channel, msg_id)` for idempotent upserts.
+- `supplier_subscriptions`: Recurring agreement, billing cycle, current period, next due date, and grace days.
+- `supplier_payments`: Immutable ledger of received payments (kind: `onboarding` or `subscription`).
+- `supplier_events`: Unified audit timeline of channel links, logins, product edits, payments, and admin notes.
 
-### Gate 3 — first supplier offer
+---
 
-Do not promise unlimited manual work. Use a deliberately small pilot offer:
+## 7. Launch & Operational Outreach Runbook
 
-- First 60 structured products: free trial.
-- Store + Telegram synchronization: proposed 99 DH/month after trial.
-- Larger initial imports: quoted as a fixed package after inspecting the
-  channel; media count is not treated as product count.
-- Every scope is written in the supplier CRM: included product count, import
-  assumptions, maintenance allowance, trial end, next payment and follow-up.
+### Gate 1: Infrastructure & Environment
+- Production domain: `jemlix.com` behind Caddy reverse proxy on Hetzner VPS.
+- Application bound locally to `127.0.0.1:3001`.
+- Secrets in `/etc/jemla/jemla.env`: `ADMIN_TOKEN`, `BOT_TOKEN`, `SUPPLIER_AUTH_SECRET`, `PUBLIC_BASE_URL`.
 
-This pricing is still a pilot hypothesis. Measure minutes of work per final
-product before making it permanent.
+### Gate 2: Direct Outreach Scripts
 
-### Gate 4 — direct outreach
+**French Outreach Message:**
+> Bonjour, je travaille sur Jemlix, un service qui transforme les catalogues Telegram des grossistes en boutique web organisée. J'ai vu votre canal et je pense qu'il se prête bien au format. Je peux préparer gratuitement un test de 60 produits, sans modifier votre manière de publier. Si le résultat vous convient, on discute ensuite de la maintenance. Est-ce que je peux vous montrer un exemple ?
 
-Start with three suppliers, not thirty. Prefer active channels with clear
-product photos, visible prices or wholesale terms, and an owner reachable by
-Telegram or WhatsApp.
+**Darija Outreach Message:**
+> سلام، كنخدم على Jemlix، خدمة كتحول كاطالوغ تيليغرام ديال تجار الجملة لمتجر ويب منظم. شفت القناة ديالكم وبانت ليا مناسبة. نقدر نوجد ليكم تجربة مجانية فيها 60 منتج بلا ما تبدلو طريقة الخدمة ديالكم. إلا عجباتكم النتيجة نهضرو من بعد على الصيانة. واش نقدر نصيفط ليكم مثال؟
 
-For every prospect:
-
-1. Check the channel manually: approximate posts, estimated final products,
-   duplicated media, price quality and categories.
-2. Send a short personal message referencing their actual catalog. Do not send
-   the same bulk message to many channels.
-3. Explain the outcome: Jemlix structures the catalog and keeps new Telegram
-   products synchronized; the supplier does not upload everything twice.
-4. Offer the 60-product pilot and state clearly what happens after it.
-5. Only create the supplier in Jemlix after they show interest. Record the
-   agreed scope, trial end and next follow-up.
-6. Ask permission before exporting or republishing their catalog and before
-   adding the bot as channel administrator.
-
-Suggested first message in French:
-
-> Bonjour, je travaille sur Jemlix, un service qui transforme les catalogues
-> Telegram des grossistes en boutique web organisée. J'ai vu votre canal et je
-> pense qu'il se prête bien au format. Je peux préparer gratuitement un test de
-> 60 produits, sans modifier votre manière de publier. Si le résultat vous
-> convient, on discute ensuite de la maintenance. Est-ce que je peux vous
-> montrer un exemple ?
-
-Suggested first message in Darija:
-
-> سلام، كنخدم على Jemlix، خدمة كتحول كاطالوغ تيليغرام ديال تجار الجملة لمتجر
-> ويب منظم. شفت القناة ديالكم وبانت ليا مناسبة. نقدر نوجد ليكم تجربة مجانية
-> فيها 60 منتج بلا ما تبدلو طريقة الخدمة ديالكم. إلا عجباتكم النتيجة نهضرو من
-> بعد على الصيانة. واش نقدر نصيفط ليكم مثال؟
-
-### Gate 5 — pilot operations
-
-For each of the first three suppliers:
-
-```
-permission → supplier record → private sample → channel export/import
-→ clean 60 products → supplier approval → activate public store
-→ train on /code and new-product bot flow → 7-day check-in
-→ record time/corrections → decide continue, revise or stop
-```
-
-Track at minimum:
-
-- Total media inspected and final products created.
-- Manual minutes per product.
-- Percentage requiring category/name/price correction.
-- New products per month.
-- Supplier edits made through the portal.
-- Buyer contacts generated.
-- Trial end, next follow-up and payment status.
-
-### Launch decision after three pilots
-
-Continue to ten suppliers only if the complete bot flow is stable, suppliers
-can use `/code` without help, and the measured manual work fits the proposed
-pricing. Before the catalog becomes difficult to recreate, enable and test the
-prepared backup workflow. Otherwise fix the workflow or pricing before adding
-more suppliers.
-
-## Admin dashboard (2026-10-03)
-
-- Dashboard is English-only (Arabic stays on the buyer catalog + supplier bot/portal).
-- Channel linking is bot-admin-only: forwarded posts no longer link anything.
-- Admin home is Overview → Queue → Products → Submissions → Suppliers → Payments,
-  modeled on the autowork control center (stat cards, due-soon list, supplier
-  drawer with subscription/payments/notes/timeline, record-payment modal).
-- Supplier slug is set by the admin from the linked channel name ("Use channel name").
-
-## Money flow (2026-10-05)
-
-- Estimate first: record a Catalog build payment before any subscription exists
-  (upfront estimate, e.g. ~200 products x 2 MAD). Subscription payments still
-  require a plan.
-- After the build: drawer Catalog build panel shows exact (published x rate),
-  paid, remaining — one click records the balance.
-- Kinds: onboarding vs subscription. Subscription periods/revenue ignore
-  onboarding payments.
-- Daily analytics: product/store page views counted per day (bots skipped),
-  per-supplier drawer panel + Overview totals back the monthly pitch.
+### Gate 3: Pilot Operation Metrics
+For the first 3–5 suppliers, track:
+1. Total images reviewed vs. final products published.
+2. Curation minutes per product.
+3. Frequency of price/MOQ updates through `/code` supplier portal.
+4. Total buyer click-throughs to WhatsApp/Telegram from store pages.
+5. Conversion from initial free catalog build to paid recurring subscription.
