@@ -657,6 +657,10 @@ async function publish(event, asDraft = false) {
   saving = true;
   $("publish").disabled = true;
   $("save-draft").disabled = true;
+  const busyBtn = $(asDraft ? "save-draft" : "publish");
+  const busyOriginal = busyBtn.textContent;
+  busyBtn.textContent = asDraft ? "Saving…" : "Publishing…";
+  busyBtn.classList.add("is-loading");
   try {
     const queueSupplier = supplierEl.value && supplierEl.value !== "unlinked" ? Number(supplierEl.value) : null;
     const payload = {
@@ -706,6 +710,8 @@ async function publish(event, asDraft = false) {
     saving = false;
     $("publish").disabled = false;
     $("save-draft").disabled = false;
+    busyBtn.classList.remove("is-loading");
+    if (!editor.hidden) busyBtn.textContent = busyOriginal;
   }
 }
 

@@ -1,5 +1,6 @@
 import { displayName, priceLabel, thumbUrl, mediaUrl, tierRangeLabel } from "./format.js";
 import { getLang, initLang } from "./i18n.js";
+import { withLoading } from "./ui-feedback.js";
 
 const COPY = {
   ar: {
@@ -18,6 +19,7 @@ const COPY = {
     save: "حفظ التغييرات", supplier: "المورّد", noPrice: "دون سعر", minimumShort: "الحد الأدنى",
     noMinimum: "دون حد أدنى", noStock: "المخزون غير محدد", visible: "ظاهر", hidden: "مخفي", edit: "تعديل",
     noProducts: "لم نعثر على أي منتج", noProductsHelp: "غيّر البحث أو عامل التصفية ثم حاول مرة أخرى.",
+    loggingIn: "جارٍ الدخول…", saving: "جارٍ الحفظ…",
     productStatus: "حالة المنتجات", close: "إغلاق", codeIncomplete: "أدخل الرمز كاملاً: 6 أرقام",
     operationError: "تعذر إتمام العملية", invalidCode: "رمز الدخول غير صالح أو انتهت صلاحيته.",
   },
@@ -37,6 +39,7 @@ const COPY = {
     save: "Enregistrer", supplier: "Fournisseur", noPrice: "Sans prix", minimumShort: "Minimum",
     noMinimum: "Sans minimum", noStock: "Stock non défini", visible: "Visible", hidden: "Masqué", edit: "Modifier",
     noProducts: "Aucun produit trouvé", noProductsHelp: "Modifiez la recherche ou le filtre, puis réessayez.",
+    loggingIn: "Connexion…", saving: "Enregistrement…",
     productStatus: "État des produits", close: "Fermer", codeIncomplete: "Saisissez les 6 chiffres du code.",
     operationError: "Impossible d’effectuer l’opération", invalidCode: "Le code est invalide ou a expiré.",
   },
@@ -336,20 +339,19 @@ $("supplier-login-form").addEventListener("submit", async (event) => {
   const code = $("supplier-code").value.replace(/\D/g, "").slice(0, 6);
   if (code.length !== 6) return setLoginError(sp("codeIncomplete"));
   const submit = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
-  submit.disabled = true;
-  try {
-    await api("/api/supplier/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
-    $("supplier-code").value = "";
-    await init();
-  } catch (error) {
-    setLoginError(getLang() === "fr" ? (error.status === 401 ? sp("invalidCode") : sp("operationError")) : error.message);
-  } finally {
-    submit.disabled = false;
-  }
+  await withLoading(submit, async () => {
+    try {
+      await api("/api/supplier/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      $("supplier-code").value = "";
+      await init();
+    } catch (error) {
+      setLoginError(getLang() === "fr" ? (error.status === 401 ? sp("invalidCode") : sp("operationError")) : error.message);
+    }
+  }, sp("loggingIn"));
 });
 
 $("supplier-code").addEventListener("input", (event) => {
@@ -393,33 +395,32 @@ $("supplier-edit-form").addEventListener("submit", async (event) => {
   const errorEl = $("supplier-edit-error");
   errorEl.hidden = true;
   const save = $("supplier-edit-save");
-  save.disabled = true;
-  try {
-    await api(`/api/supplier/products/${current.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        price: $("supplier-edit-por").checked ? "" : $("supplier-edit-price").value.trim(),
-        price_on_request: $("supplier-edit-por").checked,
-        price_tiers: $("supplier-edit-por").checked ? [] : editTiers,
-        stock: $("supplier-edit-stock").value.trim(),
-        moq: $("supplier-edit-moq").value.trim(),
-        description: $("supplier-edit-desc").value.trim(),
-        published: $("supplier-edit-published").checked,
-      }),
-    });
-    closeEditor();
-    await loadProducts();
-  } catch (error) {
-    if (error.status === 401) {
+  await withLoading(save, async () => {
+    try {
+      await api(`/api/supplier/products/${current.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          price: $("supplier-edit-price").value.trim(),
+          price_on_request: $("supplier-edit-por").checked,
+          price_tiers: editTiers,
+          stock: $("supplier-edit-stock").value.trim(),
+          moq: $("supplier-edit-moq").value.trim(),
+          description: $("supplier-edit-desc").value.trim(),
+          published: $("supplier-edit-published").checked,
+        }),
+      });
       closeEditor();
-      return showLogin();
+      await loadProducts();
+    } catch (error) {
+      if (error.status === 401) {
+        closeEditor();
+        return showLogin();
+      }
+      errorEl.hidden = false;
+      errorEl.textContent = getLang() === "fr" ? sp("operationError") : error.message;
     }
-    errorEl.hidden = false;
-    errorEl.textContent = getLang() === "fr" ? sp("operationError") : error.message;
-  } finally {
-    save.disabled = false;
-  }
+  }, sp("saving"));
 });
 
 async function init() {

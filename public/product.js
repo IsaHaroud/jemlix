@@ -1,5 +1,6 @@
 import { displayName, escapeHtml, mediaUrl, priceLabel, tierQtyLabel, tierRangeLabel, safeHttpUrl, thumbUrl } from "./format.js";
 import { initLang, t } from "./i18n.js";
+import { copyText, flashCopied, guardDoubleTap } from "./ui-feedback.js";
 import { initOwnerContact } from "./owner-contact.js";
 
 const $ = (id) => document.getElementById(id);
@@ -145,6 +146,12 @@ function render() {
 }
 
 // ---- events ----
+document.getElementById("g-share").addEventListener("click", async (event) => {
+  const btn = event.currentTarget;
+  if (await copyText(location.href)) flashCopied(btn, t("copied"));
+});
+guardDoubleTap(document.getElementById("g-contact"));
+guardDoubleTap(document.getElementById("s-contact"));
 thumbs.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-index]");
   if (!button) return;

@@ -1,6 +1,7 @@
 import { displayName, escapeHtml, mediaUrl, priceLabel, priceNumbers, safeHttpUrl, thumbUrl, tierRangeLabel } from "./format.js";
 import { catLabel, countLabel, initLang, moqLabel, t } from "./i18n.js";
 import { initOwnerContact } from "./owner-contact.js";
+import { copyText, flashCopied } from "./ui-feedback.js";
 
 const search = document.getElementById("search");
 const catsEl = document.getElementById("cats");
@@ -359,7 +360,23 @@ filtersDialog.addEventListener("click", (event) => {
 });
 
 // card navigation (inner links like the store link keep their own target)
+// chat links get a double-tap guard so one tap can't open two WhatsApp tabs.
 grid.addEventListener("click", (event) => {
+  const chat = event.target.closest("a.chat");
+  if (chat) {
+    if (chat.dataset.busy === "1") {
+      event.preventDefault();
+      event.stopPropagation();
+    } else {
+      chat.dataset.busy = "1";
+      chat.classList.add("is-loading");
+      setTimeout(() => {
+        delete chat.dataset.busy;
+        chat.classList.remove("is-loading");
+      }, 1500);
+    }
+    return;
+  }
   if (event.target.closest("a")) return;
   const hit = event.target.closest(".card-hit");
   if (hit?.dataset.href) location.href = hit.dataset.href;
@@ -443,6 +460,10 @@ async function load() {
       if (ava) ava.textContent = (store.name || "J").trim().charAt(0);
       document.title = `${store.name} — Jemlix`;
       productUrl = `/api/products?channel=${encodeURIComponent(store.name)}`;
+      document.getElementById("store-share").addEventListener("click", async (event) => {
+        const btn = event.currentTarget;
+        if (await copyText(location.href)) flashCopied(btn, t("copied"));
+      });
     } else {
       storeEl.hidden = true;
       document.body.classList.remove("store-page");

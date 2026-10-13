@@ -350,6 +350,29 @@ a { color: inherit; }
 .ghost.small { padding: 8px 12px; font-size: 13px; border-radius: 10px; }
 .shop-toolbar .ghost.small { margin-inline-start: auto; }
 
+/* Micro-interactions: loading buttons, copied flash, icon buttons */
+.is-loading { position: relative; pointer-events: none; }
+.is-loading::after {
+  content: ""; display: inline-block; vertical-align: -3px;
+  width: 14px; height: 14px; margin-inline-start: 8px;
+  border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%;
+  animation: ui-spin .7s linear infinite;
+}
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+.copied-inner { display: inline-flex; align-items: center; gap: 6px; }
+.is-copied { border-color: var(--whatsapp, #188c4b) !important; color: var(--whatsapp, #188c4b) !important; }
+.icon-btn {
+  flex: none; display: inline-grid; place-items: center;
+  width: 44px; height: 44px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+}
+.icon-btn:hover { border-color: var(--brand); color: var(--brand-dark); }
+.contact-row { display: flex; gap: 8px; align-items: stretch; margin-top: 12px; }
+.contact-row .contact { flex: 1; margin-top: 0; }
+.contact-row .icon-btn { height: auto; min-height: 46px; }
+.store-head { display: flex; align-items: center; gap: 14px; flex: 1; min-width: 0; }
+.store-head > div { min-width: 0; }
+
 .categories-dialog {
   width: min(860px, calc(100% - 28px)); max-height: min(760px, calc(100dvh - 28px));
   padding: 0; border: 0; border-radius: 20px; color: var(--ink);
