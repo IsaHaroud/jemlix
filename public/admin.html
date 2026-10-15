@@ -7,9 +7,10 @@
 <title>Jemlix — Admin</title>
 <link rel="icon" href="/jemlix-mark.png" type="image/png">
 <link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/admin/supplier-detail.css">
 </head>
 <body class="admin">
-<div class="adm-layout">
+<div class="adm-layout" id="adm-layout">
   <aside class="adm-side">
     <div class="adm-brand">
       <a class="wordmark" href="/" aria-label="Jemlix"><img class="brand-logo" src="/jemlix-logo.png" alt=""></a>
@@ -262,14 +263,16 @@
 
 <div id="drawer-wrap" class="drawer-wrap" hidden>
   <div class="drawer-backdrop" id="drawer-backdrop"></div>
-  <aside class="drawer">
-    <div class="brand-row" style="padding:14px 16px;border-bottom:1px solid var(--line)">
-      <strong id="drawer-title">Supplier</strong>
+  <aside class="drawer supplier-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabindex="-1">
+    <header class="supplier-drawer-header">
+      <div class="supplier-drawer-heading">
+        <span class="supplier-eyebrow">Supplier workspace</span>
+        <strong id="drawer-title">Supplier</strong>
+      </div>
       <span id="drawer-status"></span>
-      <span class="grow" style="flex:1"></span>
       <button type="button" id="drawer-close" class="ghost">Close</button>
-    </div>
-    <div id="drawer-body" style="padding:16px;overflow:auto"></div>
+    </header>
+    <div id="drawer-body" class="supplier-drawer-body" tabindex="0"></div>
   </aside>
 </div>
 
