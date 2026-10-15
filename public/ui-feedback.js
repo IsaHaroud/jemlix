@@ -1,6 +1,5 @@
 // Tiny vanilla micro-interactions (no framework):
-// copy-to-clipboard with fallback, "copied" flash, async loading buttons,
-// and double-tap guard for links that open a new tab.
+// copy-to-clipboard with fallback, "copied" flash, and async loading buttons.
 const CHECK_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`;
 
 export async function copyText(text) {
@@ -63,21 +62,4 @@ export async function withLoading(btn, fn, busyText) {
     if (btn instanceof HTMLButtonElement) btn.disabled = false;
     delete btn.dataset.busy;
   }
-}
-
-// Prevent double-tap from opening two tabs on target=_blank links.
-export function guardDoubleTap(link, ms = 1500) {
-  link.addEventListener("click", (event) => {
-    if (link.dataset.busy === "1") {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    link.dataset.busy = "1";
-    link.classList.add("is-loading");
-    setTimeout(() => {
-      delete link.dataset.busy;
-      link.classList.remove("is-loading");
-    }, ms);
-  }, true);
 }

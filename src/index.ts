@@ -363,6 +363,7 @@ function suppliersWithBilling(): any[] {
             ss.next_follow_up_at, ss.internal_note,
             (SELECT COUNT(*) FROM products p WHERE p.supplier_id = s.id) AS product_count,
             (SELECT COUNT(*) FROM submissions sub WHERE sub.supplier_id = s.id AND sub.status = 'new') AS new_submissions,
+            (SELECT COALESCE(SUM(sp.amount_minor), 0) FROM supplier_payments sp WHERE sp.supplier_id = s.id) AS total_paid_minor,
             (SELECT MAX(sp.paid_at) FROM supplier_payments sp WHERE sp.supplier_id = s.id) AS last_payment_at
      FROM suppliers s
      LEFT JOIN supplier_subscriptions ss ON ss.supplier_id = s.id

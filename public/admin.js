@@ -137,7 +137,6 @@ let loaded = [];
 let offset = 0;
 let total = 0;
 let counts = { new: 0, done: 0, skipped: 0 };
-let publishedCount = 0;
 let cfg = { defaultWhatsapp: "", defaultChannel: "" };
 let selImages = [];
 let contactType = "whatsapp";
@@ -148,7 +147,11 @@ let imgOffset = 0;
 let imgTotal = 0;
 let imgQuery = "";
 let imgTimer = 0;
-let queryTimer = 0;
+let queueQueryTimer = 0;
+let productQueryTimer = 0;
+let postsRequestId = 0;
+let productsRequestId = 0;
+let submissionsRequestId = 0;
 let saving = false;
 let suppliers = [];
 let subs = [];
@@ -176,17 +179,32 @@ function resetEditorState() {
   $("publish").textContent = "Publish";
 }
 
+function syncPriceMode() {
+  const onRequest = $("f-por").checked;
+  $("f-price").disabled = onRequest;
+  $("btn-add-tier").disabled = onRequest;
+  $("tiers").hidden = onRequest;
+  $("admin-tier-hint").hidden = !onRequest;
+}
+
 function renderCounts() {
-  countsEl.textContent = `New ${counts.new} · Published ${publishedCount}`;
+  countsEl.textContent = `New ${counts.new} · Published ${statsCache?.products.published ?? 0}`;
 }
 
 function renderSelection() {
   selCount.textContent = `${selected.size} selected`;
+  $("clear").parentElement.hidden = selected.size === 0;
 }
 
 // ---------- queue ----------
 function renderQueue() {
   queueEl.replaceChildren();
+  if (!loaded.length) {
+    const empty = document.createElement("p");
+    empty.className = "queue-empty";
+    empty.textContent = supplierEl.value ? "No posts match these filters." : "Select a supplier to view posts.";
+    queueEl.append(empty);
+  }
   for (const post of loaded) {
     const button = document.createElement("button");
     button.type = "button";
@@ -235,15 +253,19 @@ function toggle(post) {
 }
 
 async function loadPosts(reset) {
+  const requestId = ++postsRequestId;
   if (reset) {
     offset = 0;
     loaded = [];
   }
   if (!supplierEl.value) {
+    counts = { new: 0, done: 0, skipped: 0 };
     total = 0;
+    moreEl.hidden = true;
     renderQueue();
     renderSelection();
-    setNote("Select a supplier to see their posts");
+    renderCounts();
+    setNote("");
     return;
   }
   setNote("");
@@ -256,6 +278,7 @@ async function loadPosts(reset) {
     limit: "40",
   });
   const data = await j(`/api/posts?${params}`);
+  if (requestId !== postsRequestId) return;
   counts = data.counts || counts;
   total = data.total || 0;
   loaded = reset ? data.items || [] : loaded.concat(data.items || []);
@@ -335,13 +358,13 @@ async function saveSlug(name, input) {
 // ---------- products ----------
 function renderPublished(list) {
   lastPublished = list;
-  publishedCount = list.filter((p) => p.published).length;
-  renderCounts();
   publishedEl.replaceChildren();
   if (!list.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = "Nothing published yet";
+    empty.textContent = $("pub-supplier").value || $("pub-q").value.trim()
+      ? "No products match these filters."
+      : "No products yet.";
     publishedEl.append(empty);
     return;
   }
@@ -381,28 +404,39 @@ function renderPublished(list) {
     del.className = "danger";
     del.textContent = "Delete";
     del.addEventListener("click", () => removeProduct(product.id, del));
-    row.append(copy, edit, del);
+    const actions = document.createElement("div");
+    actions.className = "pub-actions";
+    actions.append(edit, del);
+    row.append(copy, actions);
     publishedEl.append(row);
   }
 }
 
 async function loadPublished() {
+  const requestId = ++productsRequestId;
   const params = new URLSearchParams({
     supplier_id: $("pub-supplier").value,
     q: $("pub-q").value.trim(),
   });
-  renderPublished(await j(`/api/admin/products?${params}`));
+  const products = await j(`/api/admin/products?${params}`);
+  if (requestId === productsRequestId) renderPublished(products);
 }
 
 async function removeProduct(id, button) {
   if (button.dataset.confirm !== "1") {
     button.dataset.confirm = "1";
     button.textContent = "Confirm delete";
+    setTimeout(() => {
+      if (button.dataset.confirm === "1") {
+        delete button.dataset.confirm;
+        button.textContent = "Delete";
+      }
+    }, 5000);
     return;
   }
   await j(`/api/products/${id}`, { method: "DELETE" });
   toast("Product deleted");
-  await Promise.all([loadPublished(), loadPosts(true)]);
+  await Promise.all([loadStats(), loadPublished(), loadPosts(true)]);
 }
 
 function editProduct(id) {
@@ -425,6 +459,7 @@ function editProduct(id) {
   $("f-category").value = product.category || "";
   $("f-price").value = product.price || "";
   $("f-por").checked = !!product.price_on_request;
+  syncPriceMode();
   $("f-stock").value = product.stock || "";
   $("f-moq").value = product.moq || "";
   $("f-desc").value = product.description || "";
@@ -630,6 +665,7 @@ function buildProduct() {
   $("f-name").value = suggestedName(text);
   $("f-price").value = "";
   $("f-por").checked = false;
+  syncPriceMode();
   $("f-stock").value = "";
   $("f-moq").value = "";
   $("f-desc").value = "";
@@ -666,7 +702,7 @@ async function publish(event, asDraft = false) {
     const payload = {
       name,
       category: $("f-category").value,
-      price: $("f-price").value,
+      price: $("f-por").checked ? "" : $("f-price").value,
       price_on_request: $("f-por").checked,
       stock: $("f-stock").value,
       moq: $("f-moq").value,
@@ -677,7 +713,7 @@ async function publish(event, asDraft = false) {
       source_channel: $("source").textContent,
       post_ids: [...selected.keys()],
       specs: specs.filter((spec) => spec.k.trim() && spec.v.trim()),
-      price_tiers: tiers,
+      price_tiers: $("f-por").checked ? [] : tiers,
       published: asDraft ? 0 : 1,
     };
     if (pendingSupplierId) payload.supplier_id = pendingSupplierId;
@@ -766,6 +802,8 @@ async function loadSuppliers() {
   if ([...subSel.options].some((o) => o.value === subCur)) subSel.value = subCur;
   const m = $("m-supplier");
   m.replaceChildren(...suppliers.map((s) => new Option(suppLabel(s), String(s.id))));
+  $("m-add").disabled = suppliers.length === 0;
+  $("m-no-suppliers").hidden = suppliers.length !== 0;
   const pub = $("pub-supplier");
   const pubCur = pub.value;
   pub.replaceChildren(
@@ -784,7 +822,8 @@ function renderSuppliers() {
     const td = document.createElement("td");
     td.colSpan = 7;
     td.className = "muted";
-    td.textContent = "No suppliers yet — they appear after /start on Telegram.";
+    tr.className = "table-empty";
+    td.textContent = "No suppliers yet. Add one here or invite one through Telegram.";
     tr.append(td);
     body.append(tr);
     return;
@@ -796,23 +835,41 @@ function renderSuppliers() {
       openSupplier(s.id);
     });
     const name = document.createElement("td");
+    name.dataset.label = "Supplier";
     const strong = document.createElement("div");
-    strong.innerHTML = `<strong>${esc(s.name || "(no name)")}</strong> <span class="muted mono">#${s.id}</span>`;
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "table-row-open";
+    open.textContent = s.name || "(no name)";
+    open.addEventListener("click", () => openSupplier(s.id));
+    strong.append(open);
+    const id = document.createElement("span");
+    id.className = "muted mono";
+    id.textContent = ` #${s.id}`;
+    strong.append(id);
     const sub = document.createElement("div");
     sub.className = "muted";
     sub.textContent = `${supplierStatusBadge(s.status).replace(/<[^>]+>/g, "")} · ${s.whatsapp || "no number"}`;
-    name.append(strong, sub);
+    const identity = document.createElement("div");
+    identity.append(strong, sub);
+    name.append(identity);
     const chan = document.createElement("td");
-    chan.innerHTML = `<div>${esc(s.channel_title || "—")}</div><div class="muted mono">${esc(s.channel_id || "")}</div>`;
+    chan.dataset.label = "Channel";
+    chan.innerHTML = `<div><div>${esc(s.channel_title || "—")}</div><div class="muted mono">${esc(s.channel_id || "")}</div></div>`;
     const store = document.createElement("td");
+    store.dataset.label = "Store";
     store.innerHTML = s.channel_slug ? `<a class="text-link mono" href="/c/${encodeURIComponent(s.channel_slug)}" target="_blank" rel="noopener">/c/${esc(s.channel_slug)}</a>` : '<span class="muted">—</span>';
     const plan = document.createElement("td");
-    plan.innerHTML = `${phaseBadge(s.phase)}<div class="muted">${esc(s.plan_name || "")}</div>`;
+    plan.dataset.label = "Plan";
+    plan.innerHTML = `<div>${phaseBadge(s.phase)}<div class="muted">${esc(s.plan_name || "")}</div></div>`;
     const due = document.createElement("td");
+    due.dataset.label = "Due";
     due.innerHTML = `<div class="mono">${esc(dueText(s))}</div>`;
     const prods = document.createElement("td");
+    prods.dataset.label = "Products";
     prods.textContent = s.product_count ?? 0;
     const paid = document.createElement("td");
+    paid.dataset.label = "Paid";
     paid.textContent = fmtMAD(s.total_paid_minor ?? 0);
     tr.append(name, chan, store, plan, due, prods, paid);
     body.append(tr);
@@ -1163,6 +1220,11 @@ async function extendSub(id, days) {
 }
 
 function openPaymentModal(presetSupplier = "", preset = {}) {
+  if (!suppliers.length) {
+    go("suppliers");
+    toast("Add a supplier before recording a payment", true);
+    return;
+  }
   const opts = suppliers.map((s) => `<option value="${s.id}">${esc(s.name || `#${s.id}`)}</option>`).join("");
   const today = new Date().toISOString().slice(0, 10);
   openModal(preset.kind === "onboarding" ? "Record catalog-build payment" : "Record payment", `
@@ -1228,6 +1290,7 @@ function openPaymentModal(presetSupplier = "", preset = {}) {
 
 // ---------- submissions ----------
 async function loadSubs(reset) {
+  const requestId = ++submissionsRequestId;
   if (reset) {
     subsOffset = 0;
     subs = [];
@@ -1239,6 +1302,7 @@ async function loadSubs(reset) {
     limit: "30",
   });
   const data = await j(`/api/submissions?${params}`);
+  if (requestId !== submissionsRequestId) return;
   subs = reset ? data.items || [] : subs.concat(data.items || []);
   subsOffset = subs.length;
   subsTotal = data.total || 0;
@@ -1250,8 +1314,10 @@ function renderSubs() {
   box.replaceChildren();
   const badge = $("subs-badge");
   const fresh = suppliers.reduce((n, s) => n + (s.new_submissions || 0), 0);
-  badge.hidden = !fresh;
-  badge.textContent = fresh ? String(fresh) : "";
+  for (const item of [badge, $("subs-badge-mobile")]) {
+    item.hidden = !fresh;
+    item.textContent = fresh ? String(fresh) : "";
+  }
   if (!subs.length) {
     const p = document.createElement("p");
     p.className = "muted";
@@ -1334,6 +1400,7 @@ function buildFromSubmission(sub) {
   $("f-name").value = suggestedName(sub.text || "");
   $("f-price").value = "";
   $("f-por").checked = false;
+  syncPriceMode();
   $("f-stock").value = "";
   $("f-moq").value = "";
   $("f-desc").value = "";
@@ -1355,6 +1422,7 @@ function buildFromSubmission(sub) {
 async function loadStats() {
   statsCache = await j("/api/admin/stats");
   renderStats();
+  renderCounts();
 }
 
 function renderStats() {
@@ -1406,6 +1474,7 @@ async function loadPayments() {
     const td = document.createElement("td");
     td.colSpan = 6;
     td.className = "muted";
+    tr.className = "table-empty";
     td.textContent = "No payments yet.";
     tr.append(td);
     body.append(tr);
@@ -1416,9 +1485,9 @@ async function loadPayments() {
     const period = [fmtDate(p.period_start), fmtDate(p.period_end)].some((d) => d !== "—")
       ? `${fmtDate(p.period_start)} → ${fmtDate(p.period_end)}`
       : "—";
-    tr.innerHTML = `<td class="mono">#${p.id}</td><td>${esc(p.supplier_name || `#${p.supplier_id}`)}</td>
-      <td><strong>${fmtMAD(p.amount_minor)}</strong></td><td>${esc(p.method || "")}</td>
-      <td class="muted mono">${esc(period)}</td><td class="muted mono">${fmtDate(p.paid_at)}</td>`;
+    tr.innerHTML = `<td class="mono" data-label="ID">#${p.id}</td><td data-label="Supplier">${esc(p.supplier_name || `#${p.supplier_id}`)}</td>
+      <td data-label="Amount"><strong>${fmtMAD(p.amount_minor)}</strong></td><td data-label="Method">${esc(p.method || "")}</td>
+      <td class="muted mono" data-label="Period">${esc(period)}</td><td class="muted mono" data-label="Date">${esc(fmtDate(p.paid_at))}</td>`;
     tr.addEventListener("click", () => openSupplier(p.supplier_id));
     body.append(tr);
   }
@@ -1497,6 +1566,7 @@ $("btn-add-img").addEventListener("click", () => {
 });
 $("btn-add-spec").addEventListener("click", () => addSpecRow("", ""));
 $("btn-add-tier").addEventListener("click", () => addTierRow("", null, ""));
+$("f-por").addEventListener("change", syncPriceMode);
 $("img-q").addEventListener("input", () => {
   imgQuery = $("img-q").value.trim();
   clearTimeout(imgTimer);
@@ -1505,8 +1575,8 @@ $("img-q").addEventListener("input", () => {
 $("img-more").addEventListener("click", () => loadImages(false).catch((err) => setNote(err.message)));
 $("more").addEventListener("click", () => loadPosts(false).catch((err) => setNote(err.message)));
 queryEl.addEventListener("input", () => {
-  clearTimeout(queryTimer);
-  queryTimer = setTimeout(() => loadPosts(true).catch((err) => setNote(err.message)), 200);
+  clearTimeout(queueQueryTimer);
+  queueQueryTimer = setTimeout(() => loadPosts(true).catch((err) => setNote(err.message)), 200);
 });
 statusEl.addEventListener("change", () => loadPosts(true).catch((err) => setNote(err.message)));
 channelEl.addEventListener("change", () => loadPosts(true).catch((err) => setNote(err.message)));
@@ -1520,8 +1590,8 @@ $("sub-supplier").addEventListener("change", () => loadSubs(true).catch((e) => t
 $("subs-more").addEventListener("click", () => loadSubs(false).catch((e) => toast(e.message, true)));
 $("pub-supplier").addEventListener("change", () => loadPublished().catch((e) => toast(e.message, true)));
 $("pub-q").addEventListener("input", () => {
-  clearTimeout(queryTimer);
-  queryTimer = setTimeout(() => loadPublished().catch((e) => toast(e.message, true)), 250);
+  clearTimeout(productQueryTimer);
+  productQueryTimer = setTimeout(() => loadPublished().catch((e) => toast(e.message, true)), 250);
 });
 $("m-add").addEventListener("click", async () => {
   const err = $("m-error");

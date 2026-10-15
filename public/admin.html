@@ -40,7 +40,7 @@
       <button type="button" class="chip" data-page="overview">Overview</button>
       <button type="button" class="chip" data-page="queue">Queue</button>
       <button type="button" class="chip" data-page="products">Products</button>
-      <button type="button" class="chip" data-page="subs">Submissions</button>
+      <button type="button" class="chip" data-page="subs">Submissions <span id="subs-badge-mobile" class="badge-moq" hidden></span></button>
       <button type="button" class="chip" data-page="suppliers">Suppliers</button>
       <button type="button" class="chip" data-page="payments">Payments</button>
     </nav>
@@ -62,9 +62,6 @@
               <button type="button" class="ghost" data-go="suppliers">Add supplier</button>
               <button type="button" class="ghost" data-go="payments">Record payment</button>
             </div>
-            <p class="muted" style="margin-top:12px">Flow: supplier <span class="mono">/start</span> → pending →
-              activate + slug → import channel → curate → publish on
-              <span class="mono">/c/&lt;slug&gt;</span>.</p>
           </div>
         </div>
       </section>
@@ -91,7 +88,7 @@
             </div>
             <div id="queue"></div>
             <button type="button" id="more" class="more" hidden>Show more</button>
-            <div class="queue-actions">
+            <div class="queue-actions" hidden>
               <span id="sel-count" class="grow">0 selected</span>
               <button type="button" id="clear" class="ghost">Clear</button>
               <button type="button" id="skip" class="ghost">Skip</button>
@@ -99,11 +96,11 @@
             </div>
           </aside>
           <div class="admin-main">
-            <section>
-              <h2>Channels &amp; stores</h2>
-              <p class="muted">Store URL: <span class="mono">/c/slug</span> — edit the slug and save.</p>
+            <details class="channel-settings">
+              <summary>Channel store URLs</summary>
+              <p class="muted">Edit a store slug, then save. Store URLs use <span class="mono">/c/slug</span>.</p>
               <div id="channels"></div>
-            </section>
+            </details>
             <p id="empty" class="empty">Select one or more posts, then “Build product”.</p>
             <form id="editor" hidden>
               <p id="edit-badge" class="badge-moq" hidden></p>
@@ -148,13 +145,14 @@
                   <textarea id="f-desc" rows="3"></textarea>
                 </label>
               </div>
-              <div class="panel">
+              <div class="panel" id="admin-tiers-panel">
                 <div class="brand-row">
                   <h3>Quantity price tiers (optional)</h3>
                   <button type="button" id="btn-add-tier" class="text-btn">Add tier</button>
                 </div>
                 <p class="muted">Bigger quantity → lower unit price. Leave empty to use the single price above.</p>
                 <div id="tiers"></div>
+                <p id="admin-tier-hint" class="muted" hidden>Quantity prices are unavailable with price on request.</p>
               </div>
               <div class="panel">
                 <div class="brand-row">
@@ -181,7 +179,7 @@
       <!-- PRODUCTS -->
       <section id="page-products" hidden>
         <div class="panel">
-          <div class="brand-row">
+          <div class="brand-row admin-filter-row">
             <select id="pub-supplier" aria-label="Product supplier">
               <option value="">All suppliers</option>
             </select>
@@ -194,7 +192,7 @@
       <!-- SUBMISSIONS -->
       <section id="page-subs" hidden>
         <div class="panel">
-          <div class="brand-row">
+          <div class="brand-row admin-filter-row sub-filter-row">
             <select id="sub-status" aria-label="Submission status">
               <option value="new" selected>New</option>
               <option value="published">Published</option>
@@ -224,6 +222,7 @@
             </label>
           </div>
           <p id="m-error" class="form-error" hidden></p>
+          <p id="m-no-suppliers" class="muted" hidden>Add a supplier before creating a submission.</p>
           <div class="editor-actions">
             <button type="button" id="m-add" class="primary">Add to submissions</button>
           </div>
@@ -233,13 +232,12 @@
       <!-- SUPPLIERS -->
       <section id="page-suppliers" hidden>
         <div class="panel">
-          <div class="brand-row">
-            <h3 style="margin:0">Suppliers</h3>
-            <span class="grow" style="flex:1"></span>
+          <div class="brand-row admin-section-head">
+            <h3>Suppliers</h3>
             <button type="button" id="supp-add" class="primary">Add supplier</button>
           </div>
         </div>
-        <div class="panel table-wrap"><table class="tbl">
+        <div class="panel table-wrap"><table class="tbl mobile-cards">
           <thead><tr><th>Supplier</th><th>Channel</th><th>Store</th><th>Plan</th><th>Due</th><th>Products</th><th>Paid</th></tr></thead>
           <tbody id="supp-rows"></tbody>
         </table></div>
@@ -248,13 +246,12 @@
       <!-- PAYMENTS -->
       <section id="page-payments" hidden>
         <div class="panel">
-          <div class="brand-row">
-            <h3 style="margin:0">Payments</h3>
-            <span class="grow" style="flex:1"></span>
+          <div class="brand-row admin-section-head">
+            <h3>Payments</h3>
             <button type="button" id="pay-add" class="primary">Record payment</button>
           </div>
         </div>
-        <div class="panel table-wrap"><table class="tbl">
+        <div class="panel table-wrap"><table class="tbl mobile-cards">
           <thead><tr><th>ID</th><th>Supplier</th><th>Amount</th><th>Method</th><th>Period</th><th>Date</th></tr></thead>
           <tbody id="pay-rows"></tbody>
         </table></div>

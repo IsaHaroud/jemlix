@@ -401,9 +401,9 @@ $("supplier-edit-form").addEventListener("submit", async (event) => {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          price: $("supplier-edit-price").value.trim(),
+          price: $("supplier-edit-por").checked ? "" : $("supplier-edit-price").value.trim(),
           price_on_request: $("supplier-edit-por").checked,
-          price_tiers: editTiers,
+          price_tiers: $("supplier-edit-por").checked ? [] : editTiers,
           stock: $("supplier-edit-stock").value.trim(),
           moq: $("supplier-edit-moq").value.trim(),
           description: $("supplier-edit-desc").value.trim(),
