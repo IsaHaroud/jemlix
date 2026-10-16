@@ -10,7 +10,8 @@ export const config = {
 
   // WORKFLOW.md Phase 2: Telegram bot. Empty = bot disabled.
   botToken: Bun.env.BOT_TOKEN ?? "",
-  // Telegram user id of the catalog owner (for "new supplier / new submission" notices).  adminChatId: Bun.env.ADMIN_CHAT_ID ?? "",
+  // Telegram user id of the catalog owner (for "new supplier / new submission" notices).
+  adminChatId: Bun.env.ADMIN_CHAT_ID ?? "",
 
   // Public origin used in bot messages, e.g. https://jemlix.com (no trailing slash).
   publicBaseUrl: (Bun.env.PUBLIC_BASE_URL ?? "").replace(/\/+$/, ""),
